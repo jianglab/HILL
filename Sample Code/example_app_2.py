@@ -9,7 +9,7 @@ app_opts(static_assets=pathlib.Path(__file__).parent/"WWW")
 import numpy as np
 
 ny, nx = 200, 200  # You can adjust these dimensions as needed
-test_image = helicon.encode_numpy(np.random.rand(ny, nx))
+test_image = helicon.encode_numpy(np.random.rand(ny, nx)) # sub with any images
 
 with ui.sidebar():
     ui.h1("Image Stitching"),
