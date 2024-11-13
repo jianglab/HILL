@@ -625,7 +625,9 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.run)
     def get_class2d():
-        if input.input_mode_params() == "upload":
+        print("above")
+        if input.input_mode_params() == "1":
+            print("in upload")
             fileinfo = input.upload_classes()
             if fileinfo is not None:
                 class_file = fileinfo[0]["datapath"]
@@ -644,7 +646,8 @@ def server(input, output, session):
                     )
                     ui.modal_show(modal)
         
-        elif input.input_mode_params() == "url" and input.url_params():
+        elif input.input_mode_params() == "2" and input.url_params():
+            print("in url")
             url = input.url_params()
             try:
                 data, apix = compute.get_class2d_from_url(url)
