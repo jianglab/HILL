@@ -178,7 +178,7 @@ app_ui = ui.page_fluid(
                     value="readme_panel"
                 ),
                 id="sidebar_accordion",
-                open=[]
+                open=False
             ),
             ui.accordion(
                 ui.accordion_panel(
@@ -254,7 +254,9 @@ app_ui = ui.page_fluid(
                 )
             )
         ),
+        style="display: flex; flex-direction: column; height: 100%;"
     ),
+    
 )
 
 def server(input, output, session):
@@ -433,12 +435,13 @@ def server(input, output, session):
             return ui.TagList(
                 ui.accordion(
                     ui.accordion_panel(
-                        ui.TagList(
+                        ui.div(
                             ui.p("Choose an image"),
                             ui.output_ui("dynamic_image_select_url"),
+                            style="max-height: 500px; overflow-y: auto;"
                         ),
                         value="image_selection"
-                    )
+                    ),
                 ),
                 ui.accordion(
                     ui.accordion_panel(
@@ -475,7 +478,18 @@ def server(input, output, session):
                 ),
                 ui.input_action_button("run", label="Run", style="width: 100%;"),
                 ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
-                ui.output_ui("dynamic_image_select_upload")
+                ui.accordion(
+                    ui.accordion_panel(
+                        "Dynamic Image Selector",
+                        ui.div(
+                            ui.output_ui("dynamic_image_select_upload"),
+                            style="max-height: 500px; overflow-y: auto;"
+                        )
+                    ),
+                    id="acc_single", 
+                    multiple=False,
+                ),
+                #ui.output_ui("dynamic_image_select_upload")
             )
         elif selection == "2":  # URL
             return ui.TagList(
@@ -625,9 +639,7 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.run)
     def get_class2d():
-        print("above")
         if input.input_mode_params() == "1":
-            print("in upload")
             fileinfo = input.upload_classes()
             if fileinfo is not None:
                 class_file = fileinfo[0]["datapath"]
@@ -647,7 +659,6 @@ def server(input, output, session):
                     ui.modal_show(modal)
         
         elif input.input_mode_params() == "2" and input.url_params():
-            print("in url")
             url = input.url_params()
             try:
                 data, apix = compute.get_class2d_from_url(url)
