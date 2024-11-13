@@ -624,24 +624,43 @@ def server(input, output, session):
 
     @reactive.Effect
     @reactive.event(input.run)
-    def get_class2d_from_upload():
-        fileinfo = input.upload_classes()
-        if fileinfo is not None:
-            class_file = fileinfo[0]["datapath"]
+    def get_class2d():
+        if input.input_mode_params() == "upload":
+            fileinfo = input.upload_classes()
+            if fileinfo is not None:
+                class_file = fileinfo[0]["datapath"]
+                try:
+                    data, apix = compute.get_class2d_from_file(class_file)
+                    nx = data.shape[-1]
+                    data_all.set(data)
+                    image_size.set(nx)
+                except Exception as e:
+                    print(e)
+                    modal = ui.modal(
+                        f"Failed to read the uploaded 2D class average images from {fileinfo[0]['name']}",
+                        title="File upload error",
+                        easy_close=True,
+                        footer=None
+                    )
+                    ui.modal_show(modal)
+        
+        elif input.input_mode_params() == "url" and input.url_params():
+            url = input.url_params()
             try:
-                data, apix = compute.get_class2d_from_file(class_file)
+                data, apix = compute.get_class2d_from_url(url)
                 nx = data.shape[-1]
                 data_all.set(data)
                 image_size.set(nx)
             except Exception as e:
                 print(e)
                 modal = ui.modal(
-                    f"Failed to read the uploaded 2D class average images from {fileinfo[0]['name']}",
-                    title="File upload error",
+                    f"Failed to download 2D class average images from {url}",
+                    title="URL download error",
                     easy_close=True,
                     footer=None
                 )
                 ui.modal_show(modal)
+
 
 app = App(app_ui, server)
 
