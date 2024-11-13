@@ -65,9 +65,16 @@ import base64
 from shiny import reactive, req
 import compute
 
+import shiny_test
+
+
+# TODO: add helicon shiny here (install -r)
+
 def compute_layer_line_positions(twist, rise, csym, radius, tilt, cutoff_res, m_max):
     # TODO Complete this function
     return {i: f"Group {i}" for i in range(m_max + 1)}
+
+
 def import_with_auto_install(packages, scope=locals()):
     import importlib, site, subprocess, sys
     if isinstance(packages, str):
@@ -83,13 +90,9 @@ def import_with_auto_install(packages, scope=locals()):
             subprocess.check_call([sys.executable, '-m', 'pip', 'install', package_pip_name])
             importlib.reload(site)
             scope[package_import_name] = importlib.import_module(package_import_name)
-"""required_packages = "streamlit numpy scipy numba bokeh skimage:scikit_image mrcfile finufft psutil qrcode xmltodict st_clickable_images streamlit_drawable_canvas:streamlit-drawable-canvas".split()
-import_with_auto_install(required_packages)"""
 
-image_path = pathlib.Path(__file__).parent / "flower.png"  # Adjust to the correct file location
-test_image = np.array(Image.open(image_path))  # Load the image as a numpy array
-ny, nx = test_image.shape[:2]  # Get the dimensions of the loaded image
-
+ny, nx = 200, 200  # Get the dimensions of the loaded image
+MAX_SIZE = 500 # temp value
 
 urls = {
     "empiar-10940_job010": (
@@ -99,7 +102,7 @@ urls = {
 url_key = "empiar-10940_job010"
 
 # may not be needed
-params_orig = reactive.value(None)
+"""params_orig = reactive.value(None)
 params_work = reactive.value(None)
 apix_micrograph_auto = reactive.value(0)
 apix_micrograph_auto_source = reactive.value(None)
@@ -122,7 +125,15 @@ selected_image_labels = reactive.value([])
 
 selected_helices = reactive.value(([], [], 0))
 retained_helices_by_length = reactive.value([])
-pair_distances = reactive.value([]) 
+pair_distances = reactive.value([]) """
+
+data_all = reactive.value(None)
+image_size = reactive.value(0)
+displayed_class_images = reactive.value([])
+displayed_class_labels = reactive.value([])
+initial_selected_image_indices = reactive.value([])
+selected_images = reactive.value([])
+selected_image_labels = reactive.value([])
 
 
 
@@ -150,7 +161,7 @@ app_ui = ui.page_fluid(
     """),
     ui.layout_sidebar(
         ui.sidebar(
-             ui.accordion(
+            ui.accordion(
                 ui.accordion_panel(
                     "README",
                     ui.p("This Web app considers a biological helical structure as the product of a continous helix and a set of parallel planes. Based on the covolution theory, "
@@ -169,11 +180,17 @@ app_ui = ui.page_fluid(
                 id="sidebar_accordion",
                 open=[]
             ),
-            ui.input_radio_buttons(  
-                "input_image_radio",  
-                "How to obtain the input image/map:",  
-                {"1": "upload", "2": "url", "3": "emd-xxxxx"},  
-            ), 
+            ui.accordion(
+                ui.accordion_panel(
+                    "Input Mode",
+                    ui.input_radio_buttons(
+                        "input_mode_params",
+                        "How to obtain the input image/map:",
+                        {"1": "upload", "2": "url", "3": "emd-xxxxx"},
+                    ),
+                    value="input_mode"
+                )
+            ),
             ui.output_ui("sidebar_text"),
         ),
         ui.row(
@@ -276,16 +293,6 @@ def server(input, output, session):
         return ui.div(*checkboxes)
 
     @output
-    @render.plot
-    def layer_line_plot():
-        # Implement your layer line plotting logic here
-        # This is a placeholder plot
-        fig, ax = plt.subplots()
-        ax.plot([0, 1], [0, 1])
-        ax.set_title("Layer Line Plot")
-        return fig
-
-    @output
     @render.ui
     def col_one():
         value = 200 # temp temp val
@@ -328,7 +335,6 @@ def server(input, output, session):
     @render.ui
     def col_two():
         m_max_auto = 3 # temp val
-
         return ui.TagList(
             ui.input_action_button("col2_saveTwist", "Save twist/rise◀", class_="save-btn-success"),
             ui.h5("Display:"),
@@ -374,64 +380,13 @@ def server(input, output, session):
             ui.input_slider("slider_rise", "Rise (Å)", min=rise/2.0, max=min(max_rise, rise*2.0), value=rise, step=min(max_rise, rise*2.0)*0.001, width="300px")
         )
 
-    url = reactive.Value(urls[url_key][0])
+    #url = reactive.Value(urls[url_key][0])
 
-    @reactive.Effect
-    @reactive.event(input.url_params)
-    def _():
-        url.set(input.url_params())
-
-    @reactive.Calc
-    def load_images():
-        current_url = url.get()
-        if not current_url:
-            return []
-        try:
-            response = requests.get(current_url)
-            image = Image.open(BytesIO(response.content))
-            return [image]
-        except Exception as e:
-            print(f"Error loading image: {e}")
-            return []
+    # code for the sidebar
+    
 
 
-    @output
-    @render.ui
-    def sidebar_text():
-        # Get the selected value from the radio buttons
-        selection = input.input_image_radio()
-
-        # Conditionally set the sidebar text based on the selection
-        # use helicalPitch code for the input logic
-        if selection == "1":  # Upload
-            MAX_SIZE = 50000
-            return ui.TagList(
-                ui.p("Upload a mrc or mrcs file"),
-                ui.input_file("twod_imgs_file", "Choose a file to upload:", multiple=False, accept=[".mrc", ".mrcs"]),
-                ui.panel_conditional(
-                    "input.twod_imgs_file",  # Conditionally show the dropdown if a file is uploaded
-                    ui.input_select("XXX", "TEST", choices=["Option 1", "Option 2", "Option 3"]),
-                    ui.p("testing")
-                )
-            )
-        elif selection == "2":  # URL
-            return ui.TagList(
-                ui.input_text(
-                    "url_params",
-                    "Input a url of 2D image(s) or a 3D map:",
-                    value=urls[url_key][0],
-                ),
-                ui.input_checkbox("is_3d", "The input ({nx}x{ny}x{nz}) is a 3D map", value=False),
-                ui.output_ui("conditional_3D"), 
-            )
-        elif selection == "3":  # EMD-xxxxx
-            return ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx).")
-            # try to do random input, otherwise it's ok to leave out
-        else:
-            return ui.p("Please select an option to proceed.")
-
-
-        # when adding the code for sharable url, you can get rid of the url variables since it's only for uploading images and parsing
+    # when adding the code for sharable url, you can get rid of the url variables since it's only for uploading images and parsing
 
     @output
     @render.ui
@@ -480,7 +435,7 @@ def server(input, output, session):
                     ui.accordion_panel(
                         ui.TagList(
                             ui.p("Choose an image"),
-                            ui.output_ui("image_gallery"),
+                            ui.output_ui("dynamic_image_select_url"),
                         ),
                         value="image_selection"
                     )
@@ -503,167 +458,191 @@ def server(input, output, session):
                 ),
             )
 
-
-
-
-
-    @reactive.effect
-    @reactive.event(input.run)
-    def get_class2d_from_url():
-        req(input.input_image_radio() == "url")
-        req(len(input.url_classes()) > 0)
-        url = input.url_classes()
-        try:
-            data, apix = compute.get_class2d_from_url(url)
-            nx = data.shape[-1]
-        except:
-            data, apix = None, 0
-            nx = 0
-            m = ui.modal(
-                f"failed to download 2D class average images from {input.url_classes()}",
-                title="File download error",
-                easy_close=True,
-                footer=None,
+    # code added from the Helical Pitch Image Selection:
+    @output
+    @render.ui
+    def sidebar_text():
+        selection = input.input_mode_params()
+        
+        if selection == "1":  # Upload
+            return ui.TagList(
+                ui.p("Upload a mrc or mrcs file"),
+                ui.input_file(
+                    "upload_classes",
+                    "Upload the class averages in MRC format (.mrcs, .mrc)",
+                    accept=[".mrcs", ".mrc"],
+                    placeholder="mrcs or mrc file",
+                ),
+                ui.input_action_button("run", label="Run", style="width: 100%;"),
+                ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
+                ui.output_ui("dynamic_image_select_upload")
             )
-            ui.modal_show(m)
-        data_all.set(data)
-        apix_class.set(apix)
-        image_size.set(nx)
+        elif selection == "2":  # URL
+            return ui.TagList(
+                ui.input_text(
+                    "url_params",
+                    "Input a url of 2D image(s) or a 3D map:",
+                    value=urls[url_key][0],
+                ),
+                ui.input_action_button("run", label="Run", style="width: 100%;"),
+                ui.input_checkbox("is_3d", "The input ({nx}x{ny}x{nz}) is a 3D map", value=False),
+                ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
+                #ui.output_ui("dynamic_image_select_url"),
+                ui.output_ui("conditional_3D"), 
+            )
+        elif selection == "3":  # EMD-xxxxx
+            apix_auto = 0 # temp value
+            negate_auto = 0 # temp value
+            angle_auto = 1 # temp value
+            dx_auto = 1 # temp value
+            apix = 1 # temp value
+            mask_radius_auto = 1 # temp value
+            mask_len_percent_auto = 1 # temp value
+
+            return ui.TagList(
+                    ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
+                    ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"),
+                    ui.p("EMD-10499 | resolution=3.9Å\ntwwist=-31.44° | rise=6.721Å | c2"), # temp values
+                    ui.accordion(
+                        ui.accordion_panel(
+                            ui.p("Generate 2-D projection from the 3-D map"),
+                            ui.input_checkbox("apply_helical_sym", "Apply helical symmetry", value=0),
+                            ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
+                            ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
+                            ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
+                            value="2D_projection_emd"
+                        )
+                    ), 
+                    ui.accordion(
+                            ui.accordion_panel(
+                                ui.p("Image Parameters"),
+                                ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
+                                ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto, min=0.1, max=30.0, step=0.01),
+                                ui.input_checkbox("transpose", "Transpose the image", value=negate_auto),
+                                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto),
+                                ui.input_numeric("angle", "Rotate (°)", value=-angle_auto, min=-180.0, max=180.0, step=1.0),
+                                ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto*apix, min=-nx*apix, max=nx*apix, step=1.0),
+                                ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny*apix, max=ny*apix, step=1.0),
+                                ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto*apix, nx/2*apix), min=1.0, max=nx/2*apix, step=1.0),
+                                ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto, min=10.0, max=100.0, step=1.0),
+                                value="image_parameters_emd"
+                            )
+                        )             
+                )
+            # try to do random input, otherwise it's ok to leave out
+        else:
+            return ui.p("Please select an option to proceed.")
 
     @reactive.effect
-    @reactive.event(params_work, data_all, input.ignore_blank, input.sort_abundance)
+    @reactive.event(data_all, input.ignore_blank)
     def get_displayed_class_images():
-        req(params_work() is not None)
-        req(data_all() is not None)
-        data = data_all()
-        n = len(data)
-        images = [data[i] for i in range(n)]
-        image_size.set(max(images[0].shape))
+        if data_all() is not None:
+            data = data_all()
+            n = len(data)
+            images = [data[i] for i in range(n)]
+            image_size.set(max(images[0].shape))
 
-        try:
-            df = params_work()
-            abundance.set(compute.get_class_abundance(df, n))
-        except Exception:
-            print(Exception)
-            m = ui.modal(
-                f"Failed to get class abundance from the provided Class2D parameter and  image files. Make sure that the two files are for the same Class2D job",
-                title="Information error",
-                easy_close=True,
-                footer=None,
+            if input.ignore_blank():
+                included = []
+                included_images = []
+                for i in range(n):
+                    image = images[i]
+                    if np.max(image) > np.min(image):
+                        included.append(i)
+                        included_images.append(image)
+                images = included_images
+            else:
+                included = list(range(n))
+            
+            image_labels = [f"Class {i+1}" for i in included]
+            displayed_class_labels.set(image_labels)
+            displayed_class_images.set(images)
+            
+            # Reset selected images when display changes
+            selected_images.set([])
+            selected_image_labels.set([])
+    
+    @output
+    @render.ui
+    def display_selected_images():
+        imgs = selected_images()
+        labels = selected_image_labels()
+        if len(imgs) > 0 and len(labels) > 0:
+            return shiny_test.image_gallery(
+                id="display_selected_image",
+                label="Selected classe(s):",
+                images=imgs,
+                image_labels=labels,
+                enable_selection=True,
+                allow_multiple_selection=True,
             )
-            ui.modal_show(m)
-            return None
+        return ui.div("No images selected")
+    
+    @output
+    @render.ui
+    def dynamic_image_select_upload():
+        if len(displayed_class_images()) > 0:
+            return shiny_test.image_gallery(
+                id="select_classes",
+                label="Select class(es):",
+                images=displayed_class_images(),
+                image_labels=displayed_class_labels(),
+                image_size=128,
+                initial_selected_indices=initial_selected_image_indices(),
+                enable_selection=True,
+                allow_multiple_selection=True,
+            )
+        return ui.div("No images available")
+    
 
-        display_seq_all = np.arange(n, dtype=int)
-        if input.sort_abundance():
-            display_seq_all = np.argsort(abundance())[::-1]
-
-        if input.ignore_blank():
-            included = []
-            for i in range(n):
-                image = images[display_seq_all[i]]
-                if np.max(image) > np.min(image):
-                    included.append(display_seq_all[i])
-            images = [images[i] for i in included]
-        else:
-            included = display_seq_all
-        image_labels = [f"{i+1}: {abundance()[i]:,d}" for i in included]
-
-        displayed_class_ids.set(included)
-        displayed_class_labels.set(image_labels)
-        displayed_class_images.set(images)
-
+    @output
+    @render.ui
+    def dynamic_image_select_url():
+        if len(displayed_class_images()) > 0:
+            return shiny_test.image_gallery(
+                id="select_classes",
+                label="Select class(es):",
+                images=displayed_class_images(),
+                image_labels=displayed_class_labels(),
+                image_size=128,
+                initial_selected_indices=initial_selected_image_indices(),
+                enable_selection=True,
+                allow_multiple_selection=True,
+            )
+        return ui.div("No images available")
 
     @reactive.effect
+    @reactive.event(input.select_classes)
+    def update_selected_images():
+        if input.select_classes() is not None:
+            selected_images.set(
+                [displayed_class_images()[i] for i in input.select_classes()]
+            )
+            selected_image_labels.set(
+                [displayed_class_labels()[i] for i in input.select_classes()]
+            )
+
+    @reactive.Effect
     @reactive.event(input.run)
-    def get_params_from_upload():
-        req(input.input_image_radio() == "upload")
-        fileinfo = input.upload_params()
-        param_file = fileinfo[0]["datapath"]
-        if len(fileinfo) == 2:
-            cs_pass_through_file = fileinfo[1]["datapath"]
-            assert cs_pass_through_file.endswith(".cs")
-        else:
-            cs_pass_through_file = None
-        try:
-            tmp_params = compute.get_class2d_params_from_file(
-                param_file, cs_pass_through_file
-            )
-        except:
-            tmp_params = None
-        params_orig.set(tmp_params)
-
-        if params_orig() is not None:
-            apix = compute.get_pixel_size(
-                params_orig(), attrs=["blob/psize_A", "rlnImagePixelSize"]
-            )
-            if apix:
-                ui.update_numeric("apix_particle", value=apix)
-        else:
-            ui.update_numeric("apix_particle", value=0)
-            m = ui.modal(
-                f"failed to parse the upload class2D parameters from {fileinfo[0]['name']}",
-                title="File upload error",
-                easy_close=True,
-                footer=None,
-            )
-            ui.modal_show(m)
-
-
-        @reactive.effect
-        @reactive.event(input.run)
-        def get_params_from_url():
-            req(input.input_mode_params() == "url")
-            url = input.url_params()
+    def get_class2d_from_upload():
+        fileinfo = input.upload_classes()
+        if fileinfo is not None:
+            class_file = fileinfo[0]["datapath"]
             try:
-                tmp_params = compute.get_class2d_params_from_url(url)
-            except:
-                tmp_params = None
-            params_orig.set(tmp_params)
-
-            if params_orig() is not None:
-                apix = compute.get_pixel_size(
-                    params_orig(), attrs=["blob/psize_A", "rlnImagePixelSize"]
-                )
-                if apix:
-                    ui.update_numeric("apix_particle", value=apix)
-            else:
-                ui.update_numeric("apix_particle", value=0)
-                m = ui.modal(
-                    f"failed to download class2D parameters from {input.url_params()}",
-                    title="File download error",
+                data, apix = compute.get_class2d_from_file(class_file)
+                nx = data.shape[-1]
+                data_all.set(data)
+                image_size.set(nx)
+            except Exception as e:
+                print(e)
+                modal = ui.modal(
+                    f"Failed to read the uploaded 2D class average images from {fileinfo[0]['name']}",
+                    title="File upload error",
                     easy_close=True,
-                    footer=None,
+                    footer=None
                 )
-                ui.modal_show(m)
+                ui.modal_show(modal)
 
-    @output
-    @render.code
-    def get_imgs_from_file():
-        file_info = input.twod_imgs_file()
-        if not file_info:
-            return "No file uploaded."
-
-        file_details = file_info[0]
-        out_str = "=" * 47 + "\n" + file_details["name"]
-
-        if file_details["size"] > MAX_SIZE:
-            out_str += f"\nTruncating at {MAX_SIZE} bytes."
-
-        out_str += "\n" + "=" * 47 + "\n"
-        return out_str
-
-    @output
-    @render.text
-    def combined_selection():
-        selected = input.XXX()
-        return f"XXX: {selected if selected else 'None'}"
-
-
-
-
-
-# Run the app
 app = App(app_ui, server)
 
 

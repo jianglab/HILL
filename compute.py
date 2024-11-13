@@ -173,59 +173,93 @@ def get_class2d_from_uploaded_file(fileobj):
     import os, tempfile
 
     orignal_filename = fileobj.name
+    print("file obj name: ", orignal_filename)
+    # add back!! os.listdir("C:\\Users\\anika\\AppData\\Local\\Temp\\")
     suffix = os.path.splitext(orignal_filename)[-1]
     with tempfile.NamedTemporaryFile(suffix=suffix) as temp:
         temp.write(fileobj.read())
+        print("TN: ", temp.name)
         return get_class2d_from_file(temp.name)
 
 
 @memory.cache
 def get_class2d_from_url(url):
+
+    print("start function")
     url_final = get_direct_url(url)  # convert cloud drive indirect url to direct url
+    print("url final: ", url_final)
     fileobj = download_file_from_url(url_final)
+    print("fileobj: ", fileobj)
     if fileobj is None:
         raise ValueError(
             f"ERROR: {url} could not be downloaded. If this url points to a cloud drive file, make sure the link is a direct download link instead of a link for preview"
         )
+    print("before data")
     data = get_class2d_from_file(fileobj.name)
+    print("data: ", data)
     return data
 
 
 def get_class2d_from_file(classFile):
     import mrcfile
+    print("before mrcfile")
+    #classFile = "C:\\Users\\anika\\Downloads\\run_it020_classes.mrcs"
+    try: 
+        open(classFile, "r")
+    except Exception as e:
+        print("open exception: ", e)
 
+    print("after opening")
     with mrcfile.open(classFile) as mrc:
+        print("opens mrc file")
         apix = float(mrc.voxel_size.x)
         data = mrc.data
+    print("got data: ", data)
     return data, round(apix, 4)
 
 
 @memory.cache
 def get_class2d_params_from_url(url, url_cs_pass_through=None):
     url_final = get_direct_url(url)  # convert cloud drive indirect url to direct url
+    #print("1 download file failed", url_final)
     fileobj = download_file_from_url(url_final)
+    #print("2 file object", fileobj.name)
     if fileobj is None:
         raise ValueError(
             f"ERROR: {url} could not be downloaded. If this url points to a cloud drive file, make sure the link is a direct download link instead of a link for preview"
         )
+    
     if url_cs_pass_through is None:
+        #print("url pass through is none")
         data = get_class2d_params_from_file(fileobj.name)
+        #print("data: ", data)
         return data
+    
+
     url_final_cs_pass_through = get_direct_url(
         url_cs_pass_through
     )  # convert cloud drive indirect url to direct url
+    
     fileobj_cs_pass_through = download_file_from_url(url_final_cs_pass_through)
     if fileobj_cs_pass_through is None:
         raise ValueError(
             f"ERROR: {url_cs_pass_through} could not be downloaded. If this url points to a cloud drive file, make sure the link is a direct download link instead of a link for preview"
         )
+    
+    #print("fileobj: ", fileobj.name)
     data = get_class2d_params_from_file(fileobj.name, fileobj_cs_pass_through.name)
     return data
 
 
 def get_class2d_params_from_file(params_file, cryosparc_pass_through_file=None):
+    #print("start function")
     if params_file.endswith(".star"):
+        #print("before params")
+        
+        #print("file obj name: ", params_file)
+        #os.listdir("C:\\Users\\anika\\AppData\\Local\\Temp\\")
         params = star_to_dataframe(params_file)
+        #print("end params, ", params)
     elif params_file.endswith(".cs"):
         assert cryosparc_pass_through_file is not None
         params = cs_to_dataframe(params_file, cryosparc_pass_through_file)
@@ -240,7 +274,10 @@ def get_class2d_params_from_file(params_file, cryosparc_pass_through_file=None):
 
 def star_to_dataframe(starFile):
     import starfile
-
+    import os 
+    #print("file obj name: ", starFile)
+    #temp = os.listdir("C:\\Users\\anika\\AppData\\Local\\Temp\\")
+    #print(temp)
     d = starfile.read(starFile, always_dict=True)
     assert (
         "optics" in d and "particles" in d
@@ -350,7 +387,7 @@ def download_file_from_url(url):
         filesize = get_file_size(url)
         local_filename = url.split("/")[-1]
         suffix = "." + local_filename
-        fileobj = tempfile.NamedTemporaryFile(suffix=suffix)
+        fileobj = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         with requests.get(url) as r:
             r.raise_for_status()  # Check for request success
             fileobj.write(r.content)
