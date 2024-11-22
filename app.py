@@ -443,19 +443,14 @@ def server(input, output, session):
                     placeholder="mrcs or mrc file",
                 ),
                 ui.input_action_button("run", label="Run", style="width: 100%;"),
+                ui.input_checkbox("is_3d", "The input ({nx}x{ny}x{nz}) is a 3D map", value=False),
                 ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
-                ui.accordion(
-                    ui.accordion_panel(
-                        "Dynamic Image Selector",
-                        ui.div(
-                            ui.output_ui("dynamic_image_select_upload"),
-                            style="max-height: 500px; overflow-y: auto;"
-                        )
-                    ),
-                    id="acc_single", 
-                    multiple=False,
-                ),
-                #ui.output_ui("dynamic_image_select_upload")
+                ui.output_ui("conditional_3D"),
+                #ui.output_ui("display_selected_images"),
+                output_widget("display_micrograph"),
+                output_widget("transformed_display_micrograph"),
+                output_widget("plot_graph"),
+                output_widget("acf_plot"),
             )
         elif selection == "2":  # URL
             return ui.TagList(
