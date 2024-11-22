@@ -762,12 +762,10 @@ def server(input, output, session):
         data = selected_images()[0]
         mask_radius, mask_len_fraction = mask_parameters()
         
-        # Calculate data for the plot
         x = np.arange(-nx // 2, nx // 2) * apix_reactive()
         ymax = np.max(data, axis=0)
         ymean = np.mean(data, axis=0)
         
-        # Create Plotly figure
         fig = go.Figure()
         
         # Add max line
@@ -784,7 +782,6 @@ def server(input, output, session):
         fig.add_shape(type="line", x0=mask_radius, x1=mask_radius, y0=0, y1=np.max(ymax), 
                       line=dict(color="green", dash="dash"), name='mask_max')
 
-        # Update layout
         fig.update_layout(
             xaxis_title="x (Å)",
             yaxis_title="Pixel value",
