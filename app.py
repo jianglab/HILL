@@ -127,6 +127,8 @@ app_ui = ui.page_fluid(
             overflow-wrap: break-word; /* For better compatibility */
             white-space: normal;  /* Ensure normal white space handling */
         }        
+        
+        
     """),
     ui.layout_sidebar(
         ui.sidebar(
@@ -788,8 +790,19 @@ def server(input, output, session):
             showlegend=True,
             legend=dict(x=0.9, y=1.1),
             height=400,
-            width=250
+            #width=250
+            autosize=True,
+            margin=dict(l=10, r=10, t=50, b=10),
+            plot_bgcolor="white",
+            title=dict(
+                text="x (Å) vs. Pixel value",
+                x=0.5,
+                y=0.95,
+                xanchor="center",
+                font=dict(size=14)
+            )
         )
+
 
         return fig
 
@@ -834,8 +847,18 @@ def server(input, output, session):
             yaxis_title="Axial Shift (Å)",
             showlegend=True,
             height=400,
-            width=250,
-            hovermode="x unified"
+            #width=250,
+            hovermode="x unified",
+            autosize=True,
+            margin=dict(l=10, r=10, t=50, b=10),
+            plot_bgcolor="white",
+            title=dict(
+                text="Auto-correlation vs. Axial Shift (Å)",
+                x=0.5,
+                y=0.95,
+                xanchor="center",
+                font=dict(size=14)
+            )
         )
 
         return fig
