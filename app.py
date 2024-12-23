@@ -11,7 +11,6 @@ from shiny import App, Inputs, Outputs, Session, reactive, render, ui
 from shiny.types import ImgData
 from shiny import session
 
-from plotly.graph_objects import Figure
 from shinywidgets import output_widget, render_widget, render_plotly
 
 
@@ -99,12 +98,16 @@ initial_selected_image_indices = reactive.value([])
 selected_images = reactive.value([])
 selected_image_labels = reactive.value([])
 
-
 first_point = reactive.Value(None)
 second_point = reactive.Value(None)
 
+
+
+#shiny_test.setup_ajdustable_sidebar(width="25vw")
+# my code
 app_ui = ui.page_fluid(
     ui.tags.style("""
+        
         .scrollable-container {
             display: flex;
             flex-direction: row;
@@ -123,7 +126,7 @@ app_ui = ui.page_fluid(
             word-wrap: break-word;  /* Allow text to wrap within the column */
             overflow-wrap: break-word; /* For better compatibility */
             white-space: normal;  /* Ensure normal white space handling */
-        }
+        }        
     """),
     ui.layout_sidebar(
         ui.sidebar(
@@ -158,6 +161,7 @@ app_ui = ui.page_fluid(
                 )
             ),
             ui.output_ui("sidebar_text"),
+            class_="custom-sidebar",
         ),
         ui.row(
             ui.column(12,
@@ -188,7 +192,7 @@ app_ui = ui.page_fluid(
                 ui.column(3,
                     ui.div(
                         ui.output_ui("col_three"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 100%;",
+                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 15%;",
                         class_="wrap-text"
                     ),
                     class_="button-container"
@@ -196,7 +200,7 @@ app_ui = ui.page_fluid(
                 ui.column(3,
                     ui.div(
                         ui.output_ui("col_four"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 100%;",
+                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 15%;",
                         class_="wrap-text"
                     ),
                     class_="button-container"
@@ -204,7 +208,7 @@ app_ui = ui.page_fluid(
                 ui.column(3,
                     ui.div(
                         ui.output_ui("col_five"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 100%;",
+                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 15%;",
                         class_="wrap-text"
                     ),
                     class_="button-container"
@@ -220,11 +224,14 @@ app_ui = ui.page_fluid(
                 )
             )
         ),
-        style="display: flex; flex-direction: column; height: 100%;"
+        shiny_test.setup_adjustable_sidebar(width="10vw"),
     ),
-    
 )
 
+
+
+
+rise = 0.0 # temp val
 def server(input, output, session):
 
     @output
@@ -332,8 +339,9 @@ def server(input, output, session):
     def col_four():
         min_pitch = 0.0 # temp val
         pitch = 0.0 # temp val
+        min_pitch = abs(rise)
         return ui.TagList(
-            # TODO fix this line: ui.input_numeric("spinner_pitch", "Pitch (Å)", value=max(min_pitch, session.get("pitch", min_pitch)), min=min_pitch, step=1.0, width="300px"),
+            ui.input_numeric("spinner_pitch", "Pitch (Å)", value=max(min_pitch, pitch), min=min_pitch, step=1.0, width="300px"),
             ui.input_slider("slider_pitch", "Pitch (Å)", min=pitch/2.0, max=pitch*2.0, value=pitch, step=pitch*0.002, width="300px"),
         )
         
@@ -342,7 +350,7 @@ def server(input, output, session):
     def col_five():
         min_rise = 0.0 # temp val
         max_rise = 0.0 # temp val
-        rise = 0.0 # temp val
+        # global: rise = 0.0 # temp val
         return ui.TagList(
             ui.input_numeric("spinner_rise", "Rise (Å)", value=rise, min=min_rise, max=max_rise, step=1.0, width="300px"),
             ui.input_slider("slider_rise", "Rise (Å)", min=rise/2.0, max=min(max_rise, rise*2.0), value=rise, step=min(max_rise, rise*2.0)*0.001, width="300px")
@@ -351,9 +359,6 @@ def server(input, output, session):
     #url = reactive.Value(urls[url_key][0])
 
     # code for the sidebar
-    
-
-
     # when adding the code for sharable url, you can get rid of the url variables since it's only for uploading images and parsing
 
     @output
@@ -782,7 +787,8 @@ def server(input, output, session):
             yaxis_title="Pixel value",
             showlegend=True,
             legend=dict(x=0.9, y=1.1),
-            height=400
+            height=400,
+            width=250
         )
 
         return fig
@@ -828,6 +834,7 @@ def server(input, output, session):
             yaxis_title="Axial Shift (Å)",
             showlegend=True,
             height=400,
+            width=250,
             hovermode="x unified"
         )
 
