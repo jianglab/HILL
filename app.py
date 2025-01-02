@@ -94,11 +94,11 @@ def import_with_auto_install(packages, scope=locals()):
             scope[package_import_name] = importlib.import_module(package_import_name)
 
 #ny, nx = 200, 200 # Get the dimensions of the loaded image
-global nx, ny, nz
-nx = 0  # default value
-ny = 0  # default value
-nz = 1    # default value
+nx = reactive.value(0)  # default value
+ny = reactive.value(0)  # default value
+nz = reactive.value(1)    # default value
 MAX_SIZE = 500 # temp value
+
 
 urls = {
     "empiar-10940_job010": (
@@ -108,33 +108,8 @@ urls = {
 url_key = "empiar-10940_job010"
 
 # may not be needed
-"""params_orig = reactive.value(None)
-params_work = reactive.value(None)
-apix_micrograph_auto = reactive.value(0)
-apix_micrograph_auto_source = reactive.value(None)
-apix_micrograph = reactive.value(0)
-apix_particle = reactive.value(0)
-
 data_all = reactive.value(None)
-abundance = reactive.value([])
-apix_class = reactive.value(0)
-image_size = reactive.value(0)
-
-displayed_class_ids = reactive.value([])
-displayed_class_images = reactive.value([])
-displayed_class_labels = reactive.value([])
-
-min_len = reactive.value(0)
-selected_image_indices = reactive.value([])
-selected_images = reactive.value([])
-selected_image_labels = reactive.value([])
-
-selected_helices = reactive.value(([], [], 0))
-retained_helices_by_length = reactive.value([])
-pair_distances = reactive.value([]) """
-
-data_all = reactive.value(None)
-apix_reactive = reactive.value(1)
+#apix_reactive = reactive.value(2.3)
 image_size = reactive.value(0)
 displayed_class_images = reactive.value([])
 displayed_class_labels = reactive.value([])
@@ -145,9 +120,24 @@ selected_image_labels = reactive.value([])
 first_point = reactive.Value(None)
 second_point = reactive.Value(None)
 
+apix_auto = reactive.value(2)
+negate_auto = reactive.value(0)
+angle_auto = reactive.value(1)
+dx_auto = reactive.value(1)
+mask_radius_auto = reactive.value(1)
+mask_len_percent_auto = reactive.value(1)
+
+value = reactive.value(200)
+helical_radius = reactive.value(1)
+m_max_auto_reactive = reactive.value(3)
+twist = reactive.value(0.0)
+min_pitch = reactive.value(0.0)
+pitch = reactive.value(0.0)
+rise = reactive.value(0.0)
+min_rise = reactive.value(0.0)
+max_rise = reactive.value(0.0)
 
 
-#shiny_test.setup_ajdustable_sidebar(width="25vw")
 # my code
 app_ui = ui.page_fluid(
     ui.tags.style("""
@@ -277,33 +267,29 @@ app_ui = ui.page_fluid(
 
 
 
-rise = 0.0 # temp val
 def server(input, output, session):
-    dimensions = reactive.Value({
-        'nx': nx,
-        'ny': ny,
-        'nz': nz
-    })
+    apix_reactive = reactive.value(1)
 
     @reactive.effect
-    def update_is_3d_ui():
-        # Update the dimensions reactive value whenever they change
-        if 'nx' in globals() and 'ny' in globals() and 'nz' in globals():
-            dimensions.set({
-                'nx': nx,
-                'ny': ny,
-                'nz': nz
-            })
-
+    @reactive.event(input.apix)
+    def update_apix():
+        new_value = input.apix()
+        if new_value is not None:  # Check if the input has a valid value
+            apix_reactive.set(new_value)
 
     def update_dimensions(image):
-        global nx, ny, nz
         if image is not None:
             if len(image.shape) == 2:
-                ny, nx = image.shape
-                nz = 1
+                nx.set(image.shape[0])
+                ny.set(image.shape[1])
+                nz.set(1)
+                #ny, nx = image.shape
+                #nz = 1
             elif len(image.shape) == 3:
-                nz, ny, nx = image.shape
+                nx.set(image.shape[0])
+                ny.set(image.shape[1])
+                nz.set(image.shape[2])
+                #nz, ny, nx = image.shape
 
     @output
     @render.text
@@ -341,18 +327,13 @@ def server(input, output, session):
     @output
     @render.ui
     def col_one():
-        value = 200 # temp temp val
-        apix = 1 # temp val
-        nx = 5 # temp val
-        ny = 5 #temp val
-        helical_radius = 1 #temp val
         return ui.TagList(
                 ui.input_action_button("col1_saveTwist", "Save twist/rise↶", class_="save-btn-success"),
                 ui.input_numeric('csym', 'csym', value=6, min=1, step=1),
-                ui.input_numeric('filament_diameter', 'Filament/tube diameter (Å)', value=value, min=1.0, max=1000.0, step=10.),
+                ui.input_numeric('filament_diameter', 'Filament/tube diameter (Å)', value=value(), min=1.0, max=1000.0, step=10.),
                 ui.input_numeric("out_of_plane_tilt", "Out-of-plane tilt (°)", value=0.0, min=-90.0, max=90.0, step=1.0),
-                ui.input_numeric('res_limit_x', 'Resolution limit - X (Å)', value=3*apix, min=2*apix, step=1),
-                ui.input_numeric("res_limit_y", "Resolution limit - Y (Å)", value=2*apix, min=2*apix, step=1.0),
+                ui.input_numeric('res_limit_x', 'Resolution limit - X (Å)', value=3*apix_reactive(), min=2*apix_reactive(), step=1),
+                ui.input_numeric("res_limit_y", "Resolution limit - Y (Å)", value=2*apix_reactive(), min=2*apix_reactive(), step=1.0),
                 ui.accordion(
                     ui.accordion_panel(
                         "Additional settings",
@@ -362,15 +343,15 @@ def server(input, output, session):
                         ui.input_text("ll_colors", 'Layerline colors', value="lime cyan violet salmon silver"),
                         ui.input_numeric("hp_fraction", 'Fourier high-pass (%)', value=0.4 * 100, min=0.0, max=100.0, step=0.1),
                         ui.input_numeric("lp_fraction", 'Fourier low-pass (%)', value=0.0 * 100, min=0.0, max=100.0, step=10.0),
-                        ui.input_numeric("pnx", 'FFT X-dim size (pixels)', value=512, min=min(nx, 128), step=2),
-                        ui.input_numeric("pny", 'FFT Y-dim size (pixels)', value=1024, min=min(ny, 512), step=2),
+                        ui.input_numeric("pnx", 'FFT X-dim size (pixels)', value=512, min=min(nx(), 128), step=2),
+                        ui.input_numeric("pny", 'FFT Y-dim size (pixels)', value=1024, min=min(ny(), 512), step=2),
                         value="add_settings"
                     ),
                 ),
                 ui.accordion(
                     ui.accordion_panel(
                         "Simulation",
-                        ui.input_numeric("ball_radius", 'Gaussian radius (Å)', value=0.0, min=0.0, max=helical_radius, step=5.0),
+                        ui.input_numeric("ball_radius", 'Gaussian radius (Å)', value=0.0, min=0.0, max=helical_radius(), step=5.0),
                         value="simulation"
                     ),
                 ),
@@ -380,7 +361,6 @@ def server(input, output, session):
     @output
     @render.ui
     def col_two():
-        m_max_auto = 3 # temp val
         return ui.TagList(
             ui.input_action_button("col2_saveTwist", "Save twist/rise◀", class_="save-btn-success"),
             ui.h5("Display:"),
@@ -392,39 +372,34 @@ def server(input, output, session):
             ui.input_checkbox("LL", "LL", value=True),
             ui.input_checkbox("LLText", "LLText", value=True),
             ui.h5("m:"),
-            ui.input_numeric("m_max", "Max=", value=m_max_auto, min=1, step=1),
+            ui.input_numeric("m_max", "Max=", value=m_max_auto_reactive(), min=1, step=1),
             ui.output_ui("show_choices")
         )
 
     @output
     @render.ui
     def col_three():
-        twist = 0.0 # temp val
         return ui.TagList(
-            ui.input_numeric("spinner_twist", "Twist (°)", value=twist, min=-180.0, max=180.0, step=1.0, width="300px"),
-            ui.input_slider("slider_twist", "Twist (°)", min=-180.0, max=180.0, value=twist, step=0.01, width="300px"),
+            ui.input_numeric("spinner_twist", "Twist (°)", value=twist(), min=-180.0, max=180.0, step=1.0, width="300px"),
+            ui.input_slider("slider_twist", "Twist (°)", min=-180.0, max=180.0, value=twist(), step=0.01, width="300px"),
         )
         
     @output
     @render.ui
     def col_four():
-        min_pitch = 0.0 # temp val
-        pitch = 0.0 # temp val
-        min_pitch = abs(rise)
+        min_pitch_v = abs(rise())
+        min_pitch.set(min_pitch_v)
         return ui.TagList(
-            ui.input_numeric("spinner_pitch", "Pitch (Å)", value=max(min_pitch, pitch), min=min_pitch, step=1.0, width="300px"),
-            ui.input_slider("slider_pitch", "Pitch (Å)", min=pitch/2.0, max=pitch*2.0, value=pitch, step=pitch*0.002, width="300px"),
+            ui.input_numeric("spinner_pitch", "Pitch (Å)", value=max(min_pitch(), pitch()), min=min_pitch(), step=1.0, width="300px"),
+            ui.input_slider("slider_pitch", "Pitch (Å)", min=pitch()/2.0, max=pitch()*2.0, value=pitch(), step=pitch()*0.002, width="300px"),
         )
         
     @output
     @render.ui
     def col_five():
-        min_rise = 0.0 # temp val
-        max_rise = 0.0 # temp val
-        # global: rise = 0.0 # temp val
         return ui.TagList(
-            ui.input_numeric("spinner_rise", "Rise (Å)", value=rise, min=min_rise, max=max_rise, step=1.0, width="300px"),
-            ui.input_slider("slider_rise", "Rise (Å)", min=rise/2.0, max=min(max_rise, rise*2.0), value=rise, step=min(max_rise, rise*2.0)*0.001, width="300px")
+            ui.input_numeric("spinner_rise", "Rise (Å)", value=rise(), min=min_rise(), max=max_rise(), step=1.0, width="300px"),
+            ui.input_slider("slider_rise", "Rise (Å)", min=rise()/2.0, max=min(max_rise(), rise()*2.0), value=rise(), step=min(max_rise(), rise()*2.0)*0.001, width="300px")
         )
 
     #url = reactive.Value(urls[url_key][0])
@@ -432,20 +407,20 @@ def server(input, output, session):
     # code for the sidebar
     # when adding the code for sharable url, you can get rid of the url variables since it's only for uploading images and parsing
 
+    @reactive.effect
+    @reactive.event(input.apix)
+    def update_apix():
+        apix_reactive.set(input.apix())
+
     @output
     @render.ui
     def conditional_3D():
         is_3d = input.is_3d()
 
-        apix_auto = 0 # temp value
-        negate_auto = 0 # temp value
-        angle_auto = 1 # temp value
-        dx_auto = 1 # temp value
-        apix = 1 # temp value
-        mask_radius_auto = 1 # temp value
-        mask_len_percent_auto = 1 # temp value
+        """apix_value = input.apix()
+        apix_reactive.set(apix_value)"""
 
-        if is_3d:
+        if input.is_3d():
             return ui.TagList( 
                 ui.accordion(
                         ui.accordion_panel(
@@ -461,14 +436,14 @@ def server(input, output, session):
                         ui.accordion_panel(
                             ui.p("Image Parameters"),
                             ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                            ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto, min=0.1, max=30.0, step=0.01),
-                            ui.input_checkbox("transpose", "Transpose the image", value=negate_auto),
-                            ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto),
-                            ui.input_numeric("angle", "Rotate (°)", value=-angle_auto, min=-180.0, max=180.0, step=1.0),
-                            ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto*apix, min=-nx*apix, max=nx*apix, step=1.0),
-                            ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny*apix, max=ny*apix, step=1.0),
-                            ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto*apix, nx/2*apix), min=1.0, max=nx/2*apix, step=1.0),
-                            ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto, min=10.0, max=100.0, step=1.0),
+                            ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
+                            ui.input_checkbox("transpose", "Transpose the image", value=negate_auto()),
+                            ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
+                            ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                            ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix, step=1.0),
+                            ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+                            ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
+                            ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
                             value="image_parameters_1"
                         )
                     )
@@ -490,14 +465,14 @@ def server(input, output, session):
                         ui.p("Image Parameters"),
                         ui.input_action_button("skip_image", "Skip this image"),
                         ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                        ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto, min=0.1, max=30.0, step=0.01),
-                        ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto),
+                        ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
+                        ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
                         ui.input_checkbox("straightening", "Straighten the filament", value=False),
-                        ui.input_numeric("angle", "Rotate (°)", value=-angle_auto, min=-180.0, max=180.0, step=1.0),
-                        ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto*apix, min=-nx*apix, max=nx*apix, step=1.0),
-                        ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny*apix, max=ny*apix, step=1.0),
-                        ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto*apix, nx/2*apix), min=1.0, max=nx/2*apix, step=1.0),
-                        ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto, min=10.0, max=100.0, step=1.0),
+                        ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                        ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                        ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+                        ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
+                        ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
                         value="image_parameters_2"
                     )
                 ),
@@ -508,13 +483,12 @@ def server(input, output, session):
     @render.ui
     def sidebar_text():
         selection = input.input_mode_params()
-        current_dims = dimensions()
         
         # Create the is_3d checkbox with current dimensions
         is_3d_checkbox = ui.input_checkbox(
             "is_3d",
-            f"The input ({current_dims['nx']}x{current_dims['ny']}x{current_dims['nz']}) is a 3D map",
-            value=(current_dims['nz'] > 1)  # Automatically set based on nz dimension
+            f"The input ({nx()}x{ny()}x{nz()}) is a 3D map",
+            value=(nz() > 1)  # Automatically set based on nz dimension
         )
         
         if selection == "1":  # Upload
@@ -556,13 +530,6 @@ def server(input, output, session):
 
             )
         elif selection == "3":  # EMD-xxxxx
-            apix_auto = 0 # temp value
-            negate_auto = 0 # temp value
-            angle_auto = 1 # temp value
-            dx_auto = 1 # temp value
-            apix = 1 # temp value
-            mask_radius_auto = 1 # temp value
-            mask_len_percent_auto = 1 # temp value
 
             return ui.TagList(
                     ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
@@ -582,14 +549,14 @@ def server(input, output, session):
                             ui.accordion_panel(
                                 ui.p("Image Parameters"),
                                 ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                                ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto, min=0.1, max=30.0, step=0.01),
-                                ui.input_checkbox("transpose", "Transpose the image", value=negate_auto),
-                                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto),
-                                ui.input_numeric("angle", "Rotate (°)", value=-angle_auto, min=-180.0, max=180.0, step=1.0),
-                                ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto*apix, min=-nx*apix, max=nx*apix, step=1.0),
-                                ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny*apix, max=ny*apix, step=1.0),
-                                ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto*apix, nx/2*apix), min=1.0, max=nx/2*apix, step=1.0),
-                                ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto, min=10.0, max=100.0, step=1.0),
+                                ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
+                                ui.input_checkbox("transpose", "Transpose the image", value=negate_auto()),
+                                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
+                                ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                                ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                                ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+                                ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
+                                ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
                                 value="image_parameters_emd"
                             )
                         )             
@@ -702,6 +669,7 @@ def server(input, output, session):
                 class_file = fileinfo[0]["datapath"]
                 try:
                     data, apix = compute.get_class2d_from_file(class_file)
+                    apix_reactive.set(apix)
                     update_dimensions(data[0])
                     #nx = data.shape[-1]
                     image_size.set(nx)
@@ -721,11 +689,12 @@ def server(input, output, session):
             url = input.url_params()
             try:
                 data, apix = compute.get_class2d_from_url(url)
+                apix_reactive.set(apix)
                 update_dimensions(data[0])
                 #nx = data.shape[-1]
-                image_size.set(nx)
+                image_size.set(nx())
                 data_all.set(data)
-                image_size.set(nx)
+                image_size.set(nx())
             except Exception as e:
                 print(e)
                 modal = ui.modal(
@@ -749,11 +718,13 @@ def server(input, output, session):
 
         #print("Selected image: ", selected_images())
 
-        nx, ny = selected_images()[0].shape[:2]
+        h, w = selected_images()[0].shape[:2]
+        nx.set(h)
+        ny.set(w)
 
         fig = image_trace.plot_micrograph(
             micrograph=255 - selected_images()[0],
-            title=f"Original image ({nx}x{ny})",
+            title=f"Original image ({nx()}x{ny()})",
             apix=apix_reactive(),
         )
 
@@ -790,7 +761,9 @@ def server(input, output, session):
 
         #print("Selected image: ", selected_images())
 
-        nx, ny = selected_images()[0].shape[:2]
+        h, w = selected_images()[0].shape[:2]
+        nx.set(h)
+        ny.set(w)
 
         image_to_display = (
             selected_images()[0] if input.negate() else 255 - selected_images()[0]
@@ -798,7 +771,7 @@ def server(input, output, session):
 
         fig = image_trace.plot_micrograph(
             micrograph= image_to_display, #255 - selected_images()[0],
-            title=f"Transformed image ({nx}x{ny})",
+            title=f"Transformed image ({nx()}x{ny()})",
             apix=apix_reactive(),
         )
 
@@ -835,9 +808,11 @@ def server(input, output, session):
         data = selected_images()[0]
 
         straightening = input.straightening()
-        radius_auto, mask_radius_auto = estimate_radial_range(data)
+        radius_auto, mask_radius_auto_v = estimate_radial_range(data)
+        mask_radius_auto.set(mask_radius_auto_v)
         mask_radius = input.mask_radius()
-        mask_len_percent_auto = 100.0 if straightening else 90.0
+        mask_len_percent_auto_v = 100.0 if straightening else 90.0
+        mask_len_percent_auto.set(mask_len_percent_auto_v)
         mask_len_fraction = input.mask_len() / 100.0
         return mask_radius, mask_len_fraction
 
@@ -852,7 +827,7 @@ def server(input, output, session):
         data = selected_images()[0]
         mask_radius, mask_len_fraction = mask_parameters()
         
-        x = np.arange(-nx // 2, nx // 2) * apix_reactive()
+        x = np.arange(-nx() // 2, nx() // 2) * apix_reactive()
         ymax = np.max(data, axis=0)
         ymean = np.mean(data, axis=0)
         
@@ -1087,7 +1062,6 @@ def resize_rescale_power_spectra(data, nyquist_res, cutoff_res=None, output_size
     if norm: pwr = normalize(pwr, percentile=(0, 100))
     return pwr
 
-
 def compute_power_spectra(data, apix, cutoff_res=None, output_size=None, log=True, low_pass_fraction=0, high_pass_fraction=0):
     fft = fft_rescale(data, apix=apix, cutoff_res=cutoff_res, output_size=output_size)
     fft = np.fft.fftshift(fft)  # shift fourier origin from corner to center
@@ -1100,7 +1074,6 @@ def compute_power_spectra(data, apix, cutoff_res=None, output_size=None, log=Tru
 
     phase = np.angle(fft, deg=False)
     return pwr, phase
-
 
 def fft_rescale(image, apix=1.0, cutoff_res=None, output_size=None):
     if cutoff_res:
@@ -1129,7 +1102,6 @@ def fft_rescale(image, apix=1.0, cutoff_res=None, output_size=None):
     # now fft has the same layout and phase origin (i.e. np.fft.ifft2(fft) would obtain original image)
     return fft
 
-
 def auto_correlation(data, sqrt=True, high_pass_fraction=0):
     #from scipy.signal import correlate2d
     fft = np.fft.rfft2(data)
@@ -1147,7 +1119,6 @@ def auto_correlation(data, sqrt=True, high_pass_fraction=0):
     corr /= np.max(corr)
     return corr
 
-
 def low_high_pass_filter(data, low_pass_fraction=0, high_pass_fraction=0):
     fft = np.fft.fft2(data)
     ny, nx = fft.shape
@@ -1164,7 +1135,6 @@ def low_high_pass_filter(data, low_pass_fraction=0, high_pass_fraction=0):
         fft *= np.fft.fftshift(filter_hp)
     ret = np.abs(np.fft.ifft2(fft))
     return ret
-
 
 def generate_tapering_filter(image_size, fraction_start=[0, 0], fraction_slope=0.1):
     ny, nx = image_size
@@ -1191,7 +1161,6 @@ def generate_tapering_filter(image_size, fraction_start=[0, 0], fraction_slope=0
         X[outer]=0
         filter *= X
     return filter
-
 
 def estimate_radial_range(data, thresh_ratio=0.1):
     proj_y = np.sum(data, axis=0)
@@ -1243,7 +1212,6 @@ def estimate_radial_range(data, thresh_ratio=0.1):
     rmean = 0.5 * (rmax*rmax+(w-1)*rcore*rcore) / (rmax+(w-1)*rcore)
     return float(rmean), float(mask_radius)    # pixel
 
-
 def auto_vertical_center(data, n_theta=180):
   #from skimage.transform import radon
   #from scipy.signal import correlate
@@ -1280,7 +1248,6 @@ def auto_vertical_center(data, n_theta=180):
   theta_best, shift_best = res
   return set_to_periodic_range(theta_best), shift_best
 
-
 def rotate_shift_image(data, angle=0, pre_shift=(0, 0), post_shift=(0, 0), rotation_center=None, order=1):
     # pre_shift/rotation_center/post_shift: [y, x]
     if angle==0 and pre_shift==[0,0] and post_shift==[0,0]: return data*1.0
@@ -1299,7 +1266,6 @@ def rotate_shift_image(data, angle=0, pre_shift=(0, 0), post_shift=(0, 0), rotat
     #from scipy.ndimage import affine_transform
     ret = affine_transform(data, matrix=m, offset=offset, order=order, mode='constant')
     return ret
-
 
 def generate_projection(data, az=0, tilt=0, noise=0, output_size=None):
     #from scipy.spatial.transform import Rotation as R
@@ -1401,13 +1367,11 @@ def apply_helical_symmetry(data, apix, twist_degree, rise_angstrom, csym=1, frac
     data_work = data_work[nz//2-nz1//2:nz//2+nz1//2, ny//2-ny1//2:ny//2+ny1//2, nx//2-nx1//2:nx//2+nx1//2]
   return data_work
 
-
 def normalize(data, percentile=(0, 100)):
     p0, p1 = percentile
     vmin, vmax = sorted(np.percentile(data, (p0, p1)))
     data2 = (data-vmin)/(vmax-vmin)
     return data2
-
 
 def nonzero_images(data, thresh_ratio=1e-3):
     assert(len(data.shape) == 3)
@@ -1419,7 +1383,6 @@ def nonzero_images(data, thresh_ratio=1e-3):
     else:
         None
 
-
 def guess_if_is_phase_differences_across_meridian(data, err=30):
     if np.any(data[:, 0]):
         return False
@@ -1430,7 +1393,6 @@ def guess_if_is_phase_differences_across_meridian(data, err=30):
         return False
     return True
 
-
 def guess_if_is_power_spectra(data, thresh=15):
     median = np.median(data)
     max = np.max(data)
@@ -1438,13 +1400,11 @@ def guess_if_is_power_spectra(data, thresh=15):
     if (max-median)>thresh*sigma: return True
     else: return False
 
-
 def guess_if_is_positive_contrast(data):
     y_proj = np.sum(data, axis=0)
     mean_edge = np.mean(y_proj[[0,1,2,-3,-2,-1]])
     if np.max(y_proj)-mean_edge > abs(np.min(y_proj)-mean_edge): return True
     else: return False
-
 
 def guess_if_3d(filename, data=None):
     if filename.endswith(".mrcs"): return False
@@ -1678,7 +1638,6 @@ int_types = {'apply_helical_sym_0':0, 'apply_helical_sym_1':0, 'csym':1, 'csym_a
 float_types = {'angle_0':0, 'angle_1':0, 'apix_0':0, 'apix_1':0, 'apix_ahs_0':0, 'apix_ahs_1':0, 'apix_map_0':0, 'apix_map_1':0, 'apix_nyquist_0':0, 'apix_nyquist_1':0, 'az_0':0, 'az_1':0, 'ball_radius':0, 'cutoff_res_x':0, 'cutoff_res_y':0, 'diameter':0, 'dx_0':0, 'dx_1':0, 'dy_0':0, 'dy_1':0, 'fraction_ahs_0':0, 'fraction_ahs_1':0, 'length_ahs_0':0, 'length_ahs_1':0, 'mask_len_0':90, 'mask_len_1':90, 'mask_radius_0':0, 'mask_radius_1':0, 'noise_0':0, 'noise_1':0, 'resolution':0, 'rise':0, 'rise_ahs_0':0, 'rise_ahs_1':0, 'simuaz':0, 'simunoise':0, 'tilt':0, 'tilt_0':0, 'tilt_1':0, 'twist':0, 'twist_ahs_0':0, 'twist_ahs_1':0, 'width_ahs_0':0, 'width_ahs_1':1}
 other_types = {'const_image_color':'', 'emd_id_0':'', 'emd_id_1':'', 'input_type_0':'image', 'input_type_1':'image', 'll_colors':'lime cyan violet salmon silver', 'url_0':'', 'url_0':''}
 
-
 def get_direct_url(url):
     #import re
     if url.startswith("https://drive.google.com/file/d/"):
@@ -1766,7 +1725,6 @@ def is_hosted(return_host=False):
         return hosted, host
     else:
         return hosted
-
 
 def read_mrc_data(mrc):
     # read mrc data
