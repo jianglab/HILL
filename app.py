@@ -24,7 +24,6 @@ from skimage.transform import radon # resize_local_mean
 import mrcfile
 from shiny.types import FileInfo
 import pathlib
-import mrcfile
 import matplotlib.pyplot as plt
 
 # from streamlit imports
@@ -44,8 +43,6 @@ from bokeh.models.tools import CrosshairTool, HoverTool
 from bokeh.plotting import figure
 
 from finufft import nufft2d2
-
-import mrcfile
 
 from numba import jit, set_num_threads, prange
 
@@ -109,7 +106,7 @@ url_key = "empiar-10940_job010"
 
 # may not be needed
 data_all = reactive.value(None)
-#apix_reactive = reactive.value(2.3)
+apix_reactive = reactive.value(2)
 image_size = reactive.value(0)
 displayed_class_images = reactive.value([])
 displayed_class_labels = reactive.value([])
@@ -136,6 +133,8 @@ pitch = reactive.value(0.0)
 rise = reactive.value(0.0)
 min_rise = reactive.value(0.0)
 max_rise = reactive.value(0.0)
+
+is_3d_reactive = reactive.value(None)
 
 
 # my code
@@ -268,14 +267,6 @@ app_ui = ui.page_fluid(
 
 
 def server(input, output, session):
-    apix_reactive = reactive.value(1)
-
-    @reactive.effect
-    @reactive.event(input.apix)
-    def update_apix():
-        new_value = input.apix()
-        if new_value is not None:  # Check if the input has a valid value
-            apix_reactive.set(new_value)
 
     def update_dimensions(image):
         if image is not None:
@@ -402,23 +393,14 @@ def server(input, output, session):
             ui.input_slider("slider_rise", "Rise (Å)", min=rise()/2.0, max=min(max_rise(), rise()*2.0), value=rise(), step=min(max_rise(), rise()*2.0)*0.001, width="300px")
         )
 
-    #url = reactive.Value(urls[url_key][0])
 
     # code for the sidebar
     # when adding the code for sharable url, you can get rid of the url variables since it's only for uploading images and parsing
 
-    @reactive.effect
-    @reactive.event(input.apix)
-    def update_apix():
-        apix_reactive.set(input.apix())
-
     @output
     @render.ui
-    def conditional_3D():
+    def conditional_3D(): 
         is_3d = input.is_3d()
-
-        """apix_value = input.apix()
-        apix_reactive.set(apix_value)"""
 
         if input.is_3d():
             return ui.TagList( 
@@ -436,14 +418,15 @@ def server(input, output, session):
                         ui.accordion_panel(
                             ui.p("Image Parameters"),
                             ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                            ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
+                            ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01), # temp val
                             ui.input_checkbox("transpose", "Transpose the image", value=negate_auto()),
                             ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
-                            ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
-                            ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix, step=1.0),
-                            ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
-                            ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
-                            ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
+                            ui.output_ui("image_para_values"),
+                            # ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                            # ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                            # ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+                            # ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
+                            # ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
                             value="image_parameters_1"
                         )
                     )
@@ -466,6 +449,39 @@ def server(input, output, session):
                         ui.input_action_button("skip_image", "Skip this image"),
                         ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
                         ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
+                        ui.output_ui("image_para_values"),
+                        # ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
+                        # ui.input_checkbox("straightening", "Straighten the filament", value=False),
+                        # ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                        # ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                        # ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+                        # ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
+                        # ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
+                        value="image_parameters_2"
+                    )
+                ),
+            )
+        
+
+    # updating apix value
+    @reactive.Effect
+    @reactive.event(input.input_type, input.apix)
+    def set_apix():
+        input_type = input.input_type()
+        apix_value = input.apix()
+        
+        if input_type in ["PS", "PD"]:
+            apix_reactive.set(apix_value * 0.5)
+            return apix_value * 0.5
+        
+        apix_reactive.set(apix_value)
+        return apix_value
+
+    @output
+    @render.ui
+    @reactive.event(input.apix)
+    def image_para_values():
+        return ui.TagList(
                         ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
                         ui.input_checkbox("straightening", "Straighten the filament", value=False),
                         ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
@@ -473,10 +489,43 @@ def server(input, output, session):
                         ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
                         ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
                         ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
-                        value="image_parameters_2"
-                    )
-                ),
-            )
+        )
+
+
+    # updating apix_auto value
+    @reactive.Effect
+    @reactive.event(input.input_mode_params, input.url_params)
+    def set_apix_auto():
+        mode = input.input_mode_params()
+        # {"1": "upload", "2": "url", "3": "emd-xxxxx"}
+        print(mode, mode == 1)
+
+        print("here")
+        if mode == "1": # upload
+            print("not here??")
+            fileobj = input.upload_classes()
+            data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_uploaded_file(fileobj)
+            apix_auto.set(apix_auto_v)
+
+            # is_3d_auto = guess_if_3d(filename=fileobj.name, data=data_all())
+            # is_3d_reactive.set(is_3d_auto)
+        elif mode == "2": # url
+            print("1")
+            image_url = input.url_params()
+            print("2")
+            #data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_url(image_url)
+            print("3")
+            #print("variable: ", apix_auto_v, " prev apix auto val: ", apix_auto())
+            #apix_auto.set(apix_auto_v)
+            print("new apix auto value: ", apix_auto())
+        else: # emd
+            print("shouldn't be here!!")
+            # data_all, map_crs_auto, apix_auto = get_emdb_map(emd_id)
+            pass
+        
+
+
+
 
     # code added from the Helical Pitch Image Selection:
     @output
@@ -504,7 +553,6 @@ def server(input, output, session):
                 ui.input_checkbox("is_3d", "The input is a 3D map", value=False),
                 ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
                 ui.output_ui("conditional_3D"),
-                #ui.output_ui("display_selected_images"),
                 output_widget("display_micrograph"),
                 output_widget("transformed_display_micrograph"),
                 output_widget("plot_graph"),
@@ -519,10 +567,8 @@ def server(input, output, session):
                 ),
                 ui.input_action_button("run", label="Run", style="width: 100%;"),
                 ui.input_checkbox("is_3d", "The input is a 3D map", value=False),
-                #is_3d_checkbox, 
                 ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
                 ui.output_ui("conditional_3D"),
-                #ui.output_ui("display_selected_images"),
                 output_widget("display_micrograph"),
                 output_widget("transformed_display_micrograph"),
                 output_widget("plot_graph"),
@@ -530,7 +576,6 @@ def server(input, output, session):
 
             )
         elif selection == "3":  # EMD-xxxxx
-
             return ui.TagList(
                     ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
                     ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"),
@@ -564,6 +609,7 @@ def server(input, output, session):
             # try to do random input, otherwise it's ok to leave out
         else:
             return ui.p("Please select an option to proceed.")
+
 
     @reactive.effect
     @reactive.event(data_all, input.ignore_blank)
@@ -669,7 +715,7 @@ def server(input, output, session):
                 class_file = fileinfo[0]["datapath"]
                 try:
                     data, apix = compute.get_class2d_from_file(class_file)
-                    apix_reactive.set(apix)
+                    #apix_reactive.set(apix)
                     update_dimensions(data[0])
                     #nx = data.shape[-1]
                     image_size.set(nx)
@@ -689,7 +735,7 @@ def server(input, output, session):
             url = input.url_params()
             try:
                 data, apix = compute.get_class2d_from_url(url)
-                apix_reactive.set(apix)
+                #apix_reactive.set(apix)
                 update_dimensions(data[0])
                 #nx = data.shape[-1]
                 image_size.set(nx())
