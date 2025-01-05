@@ -513,7 +513,7 @@ def server(input, output, session):
             print("1")
             image_url = input.url_params()
             print("2")
-            #data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_url(image_url)
+            data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_url(image_url)
             print("3")
             #print("variable: ", apix_auto_v, " prev apix auto val: ", apix_auto())
             #apix_auto.set(apix_auto_v)
