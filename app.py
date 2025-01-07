@@ -495,36 +495,47 @@ def server(input, output, session):
     # updating apix_auto value
     @reactive.Effect
     @reactive.event(input.input_mode_params, input.url_params)
-    def set_apix_auto():
+    def set_apix_auto_url():
         mode = input.input_mode_params()
         # {"1": "upload", "2": "url", "3": "emd-xxxxx"}
-        print(mode, mode == 1)
 
         print("here")
         if mode == "1": # upload
+            pass
+
             print("not here??")
             fileobj = input.upload_classes()
             data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_uploaded_file(fileobj)
+            print("variable: ", apix_auto_v, " prev apix auto val: ", apix_auto())
             apix_auto.set(apix_auto_v)
+            print("new apix auto value: ", apix_auto())
 
             # is_3d_auto = guess_if_3d(filename=fileobj.name, data=data_all())
             # is_3d_reactive.set(is_3d_auto)
         elif mode == "2": # url
-            print("1")
             image_url = input.url_params()
-            print("2")
             data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_url(image_url)
-            print("3")
-            #print("variable: ", apix_auto_v, " prev apix auto val: ", apix_auto())
-            #apix_auto.set(apix_auto_v)
-            print("new apix auto value: ", apix_auto())
+            apix_auto.set(apix_auto_v)
         else: # emd
             print("shouldn't be here!!")
             # data_all, map_crs_auto, apix_auto = get_emdb_map(emd_id)
             pass
         
-
-
+    @reactive.Effect
+    @reactive.event(input.input_mode_params, input.upload_classes)
+    def set_apix_auto_upload():
+        mode = input.input_mode_params()
+        print("here 2")
+        if mode == "1" and input.upload_classes(): # upload
+            print("not here??")
+            fileobj = input.upload_classes()
+            print("upload classes: ", input.upload_classes())
+            print("upload classes name: ", input.upload_classes()[0]['name'])
+            file_info = fileobj[0]['datapath']
+            data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_uploaded_file(input.upload_classes()[0])
+            print("variable: ", apix_auto_v, " prev apix auto val: ", apix_auto())
+            apix_auto.set(apix_auto_v)
+            print("new apix auto value: ", apix_auto())
 
 
     # code added from the Helical Pitch Image Selection:
@@ -1466,12 +1477,26 @@ def guess_if_3d(filename, data=None):
 
 def get_2d_image_from_uploaded_file(fileobj):
     #import os, tempfile
-    original_filename = fileobj.name
+    #original_filename = fileobj.name
+    # data_all = mrcfile.open(fileobj, permissive=True).data
+    # map_crs_auto = None
+    # apix_auto = None
+
+    # if data_all is not None:
+    #     apix_auto = 1.0  # or whatever default value you want to use
+    #     map_crs_auto = data_all.copy()  # if you need a copy of the data
+    # original_filename = fileobj.name
+    original_filename = fileobj['name']
     suffix = os.path.splitext(original_filename)[-1]
-    with tempfile.NamedTemporaryFile(suffix=suffix) as temp:
-        temp.write(fileobj.read())
-        data, map_crs, apix = get_2d_image_from_file(temp.name)
+    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
+        with open(fileobj['datapath'], 'rb') as src:
+            temp.write(src.read())  # Copy content to temporary file
+        temp.flush()
+    data, map_crs, apix = get_2d_image_from_file(temp.name)
+
     return data.astype(np.float32), map_crs, apix
+
+    # return data_all, map_crs_auto, apix_auto
 
 def get_emdb_ids():
     try:
@@ -1556,28 +1581,22 @@ def get_2d_image_from_url(url):
 
 def get_2d_image_from_file(filename):
     try:
-        #import mrcfile
-        with mrcfile.open(filename) as mrc:
+        with mrcfile.open(filename, permissive=True) as mrc:
             map_crs = [int(mrc.header.mapc), int(mrc.header.mapr), int(mrc.header.maps)]
             data = mrc.data.astype(np.float32)
             apix = mrc.voxel_size.x.item()
-    except:
-        #from skimage.io import imread
-        data = imread(filename, as_gray=1) * 1.0    # return: numpy array
-        data = data[::-1, :]
-        apix = 1.0
-        map_crs = [1, 2, 3]
-
-    if data.dtype==np.dtype('complex64'):
-        data_complex = data
-        ny, nx = data_complex[0].shape
-        data = np.zeros((len(data_complex), ny, (nx-1)*2), dtype=np.float32)
-        for i in range(len(data)):
-            tmp = np.abs(np.fft.fftshift(np.fft.fft(np.fft.irfft(data_complex[i])), axes=1))
-            data[i] = normalize(tmp, percentile=(0.1, 99.9))
-    if len(data.shape)==2:
-        data = np.expand_dims(data, axis=0)
-    return data.astype(np.float32), map_crs, apix
+    except Exception as e:
+        print(f"Error reading MRC file: {e}")
+        try:
+            from skimage.io import imread
+            data = imread(filename, as_gray=True) * 1.0
+            data = data[::-1, :]
+            apix = 1.0
+            map_crs = [1, 2, 3]
+        except Exception as e:
+            print(f"Error reading file as image: {e}")
+            raise ValueError("Unsupported file format or corrupted file.")
+    return data, map_crs, apix
 
 def download_file_from_url(url):
     import tempfile
@@ -1586,7 +1605,7 @@ def download_file_from_url(url):
         filesize = get_file_size(url)
         local_filename = url.split('/')[-1]
         suffix = '.' + local_filename
-        fileobj = tempfile.NamedTemporaryFile(suffix=suffix)
+        fileobj = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
         msg = f'Downloading {url}'
         if filesize is not None:
             msg += f" ({filesize/2**20:.1f} MB)"
