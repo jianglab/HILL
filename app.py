@@ -117,12 +117,21 @@ selected_image_labels = reactive.value([])
 first_point = reactive.Value(None)
 second_point = reactive.Value(None)
 
-apix_auto = reactive.value(2)
+apix_auto = reactive.value(0)
 negate_auto = reactive.value(0)
-angle_auto = reactive.value(1)
-dx_auto = reactive.value(1)
-mask_radius_auto = reactive.value(1)
-mask_len_percent_auto = reactive.value(1)
+angle_auto = reactive.value(0)
+dx_auto = reactive.value(0)
+dy_auto = reactive.value(0)
+mask_radius_auto = reactive.value(0)
+mask_len_percent_auto = reactive.value(0)
+radius_auto = reactive.value(0.0)
+
+apix_value = reactive.value(0.0)
+angle_value = reactive.value(0.0)
+dx_value = reactive.value(0.0)
+dy_value = reactive.value(0.0)
+mask_radius_value = reactive.value(0.0)
+mask_len_value = reactive.value(0.0)
 
 value = reactive.value(200)
 helical_radius = reactive.value(1)
@@ -135,7 +144,6 @@ min_rise = reactive.value(0.0)
 max_rise = reactive.value(0.0)
 
 is_3d_reactive = reactive.value(None)
-radius_auto = reactive.value(0.0)
 data = reactive.value(None)
 
 
@@ -471,11 +479,11 @@ def server(input, output, session):
     @render.ui
     @reactive.event(input.apix, angle_auto, apix_reactive, dx_auto, nx, ny, mask_radius_auto, mask_len_percent_auto)
     def image_para_values():
-        # print("1: ", mask_radius_auto()*apix_reactive())
-        # print("2: ", nx()/2*apix_reactive())
-        # print("nx, ny: ", nx(), ny())
-        # print("apix: ", apix_reactive())
-        # print("mask radius: ", mask_radius_auto())
+        print("1: ", mask_radius_auto()*apix_reactive())
+        print("2: ", nx()/2*apix_reactive())
+        print("nx, ny: ", nx(), ny())
+        print("apix: ", apix_reactive())
+        print("mask radius: ", mask_radius_auto())
 
         return ui.TagList(
                         ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
@@ -486,6 +494,7 @@ def server(input, output, session):
                         ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
                         ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
         )
+
 
 
     # updating apix_auto value
@@ -533,7 +542,7 @@ def server(input, output, session):
             angle_auto.set(0.0)
             dx_auto.set(0.0)
         elif selected_images() and len(selected_images()) > 0 and data() is not None:
-            ang_auto_v, dx_auto_v = auto_vertical_center(data())
+            ang_auto_v, dx_auto_v = auto_vertical_center(selected_images()[0])# data())
             angle_auto.set(ang_auto_v)
             dx_auto.set(dx_auto_v)
 
@@ -549,11 +558,11 @@ def server(input, output, session):
 
 
     @reactive.Effect
-    @reactive.event(input.input_type, selected_images)
+    @reactive.event(input.input_type, selected_images, data)
     def set_mask_radius_auto(): 
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
         input_type = input.input_type()
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0:
+        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data() is not None:
             radius_auto_v, mask_radius_auto_v = estimate_radial_range(data(), thresh_ratio=0.1)
             print("mask radius", mask_radius_auto_v)
             mask_radius_auto.set(mask_radius_auto_v)
@@ -564,45 +573,53 @@ def server(input, output, session):
             mask_len_percent_auto_v = 100.0
         mask_len_percent_auto.set(mask_len_percent_auto_v)
 
-
+    
     @reactive.Effect
-    @reactive.event(selected_images)
+    @reactive.event(input.angle, input.dx, input.dy, input.apix, selected_images)
     def set_data():
-        if selected_images() and len(selected_images()) > 0:
-            print("beginning")
-            data_v = selected_images()[0]
-        print("1")
-
-        print("2")
-
-        if input.is_3d():
-            print("2.10")
-            if input.transpose() and selected_images() and len(selected_images()) > 0:
-                print("2.11")
-                data_v = data_v.T
-                print("2.12")
+        # Initialize data_v
+        data_v = None
         
-        print("2.1")
-        if input.negate() and selected_images() and len(selected_images()) > 0:
+        # Check if there are selected images
+        if selected_images() and len(selected_images()) > 0:
+            data_v = selected_images()[0]
+            print("Initial data_v retrieved.")
+
+        # Apply transformations conditionally
+        if input.is_3d():
+            print("Processing as 3D input.")
+            if input.transpose():
+                print("Applying transpose.")
+                data_v = data_v.T
+            
+        if input.negate():
+            print("Inverting image contrast.")
             data_v = -data_v
 
-        # print("2.2")
-        # if (input.angle() or input.dx() or input.dy()) and (selected_images() and len(selected_images()) > 0):
-        #     print("before")
-        #     data_v = rotate_shift_image(data_v, angle=-input.angle(), post_shift=(input.dy()/input.apix(), input.dx()/input.apix()), order=1)
-        #     print("after")
+        # Handle rotation and shift
+        angle_value = input.angle()
+        dx_value = input.dx()
+        dy_value = input.dy()
+        apix_value = input.apix()
+        
+        print(f"Transform parameters - Angle: {angle_value}, Dx: {dx_value}, Dy: {dy_value}, Apix: {apix_value}")
 
-        print("3")
-        if selected_images() and len(selected_images()) > 0:
+        if (angle_value or dx_value or dy_value) and data_v is not None:
+            print("Applying rotation and shift.")
+            data_v = rotate_shift_image(
+                data_v, 
+                angle=-angle_value, 
+                post_shift=(dy_value / apix_value, dx_value / apix_value), 
+                order=1
+            )
+            print("Rotation and shift applied.")
+
+        # Update the reactive `data` object
+        if data_v is not None:
             data.set(data_v)
-            print("3.1")
-            print("data: ", data_v)
+            print("Updated data reactive with transformed data_v.")
+   
 
-        print("4")
-
-
-        
-        
 
     # code added from the Helical Pitch Image Selection:
     @output
