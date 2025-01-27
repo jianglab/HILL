@@ -418,6 +418,7 @@ def server(input, output, session):
                         ui.accordion_panel(
                             ui.p("Generate 2-D projection from the 3-D map"),
                             ui.input_checkbox("apply_helical_sym", "Apply helical symmetry", value=0),
+                            ui.output_ui("helical_sym_output"),
                             ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
                             ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
                             ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
@@ -643,8 +644,6 @@ def server(input, output, session):
             data.set(data_v)
             # print("Updated data reactive with transformed data_v.")
    
-
-
     # code added from the Helical Pitch Image Selection:
     @output
     @render.ui
@@ -669,7 +668,7 @@ def server(input, output, session):
                 ),
                 ui.input_action_button("run", label="Run", style="width: 100%;"),
                 ui.input_checkbox("is_3d", "The input is a 3D map", value=False),
-                ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
+                # ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
                 ui.output_ui("conditional_3D"),
                 output_widget("display_micrograph"),
                 output_widget("transformed_display_micrograph"),
@@ -685,7 +684,7 @@ def server(input, output, session):
                 ),
                 ui.input_action_button("run", label="Run", style="width: 100%;"),
                 ui.input_checkbox("is_3d", "The input is a 3D map", value=False),
-                ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
+                # ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
                 ui.output_ui("conditional_3D"),
                 output_widget("display_micrograph"),
                 output_widget("transformed_display_micrograph"),
@@ -728,9 +727,51 @@ def server(input, output, session):
         else:
             return ui.p("Please select an option to proceed.")
 
+    @output
+    @render.ui
+    @reactive.event(input.apply_helical_sym)
+    def helical_sym_output():
+        value = input.apply_helical_sym()
+        print("here")
+        if value:
+            print("in val")
+            return ui.TagList(
+                    # HOW TO GET THE FOLLOWING SESSION STATE VALUES:
+                    # ui.input_numeric("twist_ahs", "Twist (°):", value=???, min=-180.0, max=180.0, step=1.0),
+                    # ui.input_numeric("rise_ahs", "Rise (Å):", value=???, min=0.0, step=1.0),
+                    # ui.input_numeric("csym_ahs", "Csym:", value=???, min=1, step=1),
+                    ui.input_numeric("apix_map", "Current map pixel size (Å):", value=apix_auto(), min=0.0, step=1.0),
+                    ui.output_ui("update_apix_map_vals"),
+                    ui.hr(),
+            )
+
+    @output
+    @render.ui
+    @reactive.event(input.apix_map)
+    def update_apix_map_vals():
+        return ui.TagList(
+            ui.input_numeric("apix_ahs", "New map pixel size (Å):", value=input.apix_map(), min=0.0, step=1.0),
+            # ui.input_numeric(
+            #     "fraction_ahs",
+            #     "Center fraction (0-1):",
+            #     value=1.0,
+            #     min=input.rise_ahs()/(nz()*input.apix_map()),
+            #     max=1.0,
+            #     step=0.1,
+            # ),
+            # ui.input_numeric(
+            #     "length_ahs",
+            #     "Box length (Å):",
+            #     value=input.apix_map()*max(nz(),nx()),
+            #     min=input.rise_ahs(),
+            #     step=1.0,
+            # ),
+            ui.input_numeric("width_ahs", "Box width (Å):", value=input.apix_map()*nx(), min=0.0, step=1.0),
+        )
+
 
     @reactive.effect
-    @reactive.event(data_all, input.ignore_blank)
+    @reactive.event(data_all) # , input.ignore_blank)
     def get_displayed_class_images():
         if data_all() is not None:
             data = data_all()
@@ -740,17 +781,26 @@ def server(input, output, session):
 
             update_dimensions(images[0])
 
-            if input.ignore_blank():
-                included = []
-                included_images = []
-                for i in range(n):
-                    image = images[i]
-                    if np.max(image) > np.min(image):
-                        included.append(i)
-                        included_images.append(image)
-                images = included_images
-            else:
-                included = list(range(n))
+            # if input.ignore_blank():
+            #     included = []
+            #     included_images = []
+            #     for i in range(n):
+            #         image = images[i]
+            #         if np.max(image) > np.min(image):
+            #             included.append(i)
+            #             included_images.append(image)
+            #     images = included_images
+            # else:
+            #     included = list(range(n))
+
+            included = []
+            included_images = []
+            for i in range(n):
+                image = images[i]
+                if np.max(image) > np.min(image):
+                    included.append(i)
+                    included_images.append(image)
+            images = included_images
             
             image_labels = [f"Class {i+1}" for i in included]
             displayed_class_labels.set(image_labels)
