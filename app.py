@@ -423,14 +423,11 @@ def server(input, output, session):
                             ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
                             value="2D_projection"
                         )
-                ), 
+                ),
                 ui.accordion(
                         ui.accordion_panel(
                             ui.p("Image Parameters"),
                             ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                            ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01), # temp val
-                            ui.input_checkbox("transpose", "Transpose the image", value=negate_auto()),
-                            ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
                             ui.output_ui("image_para_values"),
                             value="image_parameters_1"
                         )
@@ -453,7 +450,6 @@ def server(input, output, session):
                         ui.p("Image Parameters"),
                         ui.input_action_button("skip_image", "Skip this image"),
                         ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                        ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
                         ui.output_ui("image_para_values"),
                         value="image_parameters_2"
                     )
@@ -477,25 +473,51 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(input.apix, angle_auto, apix_reactive, dx_auto, nx, ny, mask_radius_auto, mask_len_percent_auto)
+    @reactive.event(input.is_3d, angle_auto, apix_reactive, dx_auto, nx, ny, mask_radius_auto, mask_len_percent_auto)
     def image_para_values():
-        print("1: ", mask_radius_auto()*apix_reactive())
-        print("2: ", nx()/2*apix_reactive())
-        print("nx, ny: ", nx(), ny())
-        print("apix: ", apix_reactive())
-        print("mask radius: ", mask_radius_auto())
-
-        return ui.TagList(
-                        ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
-                        ui.input_checkbox("straightening", "Straighten the filament", value=False),
-                        ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
-                        ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
-                        ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
-                        ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
-                        ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
-        )
+        # TODO: ISSUE HAS SOMETHING TO DO WITH THIS FUNCTION
+        # print("1: ", mask_radius_auto()*apix_reactive())
+        # print("2: ", nx()/2*apix_reactive())
+        # print("nx, ny: ", nx(), ny())
+        # print("apix: ", apix_reactive())
+        # print("mask radius: ", mask_radius_auto())
 
 
+        value = input.input_type()
+
+        if value in ['image']:
+            return ui.TagList(
+                            ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
+                            ui.output_ui("add_transpose"),
+                            ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
+                            ui.input_checkbox("straightening", "Straighten the filament", value=False),
+                            ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                            ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                            ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+                            ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
+                            ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
+            )
+        elif value in ['PS', 'PD']:
+            return ui.TagList(
+                            ui.input_numeric("apix", "Nyquist res (Å)", value=2*apix_auto(), min=0.1, max=30.0, step=0.01),
+                            ui.output_ui("add_transpose"),
+                            ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
+                            ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                            ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                            ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+            )
+
+    @output
+    @render.ui
+    @reactive.event(input.is_3d)
+    def add_transpose():
+        ####### CONTINUE FROM HERE!!
+        transpose_auto = input.input_mode_params() not in [2, 3] and nx() > ny()
+        print("is_3d: ", input.is_3d())
+        if input.is_3d():
+            return ui.TagList(
+                    ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
+            )
 
     # updating apix_auto value
     @reactive.Effect
@@ -536,9 +558,12 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.input_type, data, selected_images)
     def set_angle_auto():
-        mode = input.input_type()
+        mode = input.input_type() 
 
-        if mode == "2" or mode == "3" or is_3d_reactive():
+        if mode in ["PS", "PD"]:
+            angle_auto.set(0.0)
+            dx_auto.set(0.0)
+        elif is_3d_reactive():
             angle_auto.set(0.0)
             dx_auto.set(0.0)
         elif selected_images() and len(selected_images()) > 0 and data() is not None:
@@ -553,8 +578,7 @@ def server(input, output, session):
             aspect_ratio = float(nx() / ny())
             angle_auto.set(0.0)
 
-        print("angle auto: ", angle_auto())
-
+        # print("angle auto: ", angle_auto())
 
 
     @reactive.Effect
@@ -564,7 +588,7 @@ def server(input, output, session):
         input_type = input.input_type()
         if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data() is not None:
             radius_auto_v, mask_radius_auto_v = estimate_radial_range(data(), thresh_ratio=0.1)
-            print("mask radius", mask_radius_auto_v)
+            # print("mask radius", mask_radius_auto_v)
             mask_radius_auto.set(mask_radius_auto_v)
             radius_auto.set(radius_auto_v)
 
@@ -583,17 +607,17 @@ def server(input, output, session):
         # Check if there are selected images
         if selected_images() and len(selected_images()) > 0:
             data_v = selected_images()[0]
-            print("Initial data_v retrieved.")
+            # print("Initial data_v retrieved.")
 
         # Apply transformations conditionally
         if input.is_3d():
-            print("Processing as 3D input.")
+            # print("Processing as 3D input.")
             if input.transpose():
-                print("Applying transpose.")
+                # print("Applying transpose.")
                 data_v = data_v.T
             
         if input.negate():
-            print("Inverting image contrast.")
+            # print("Inverting image contrast.")
             data_v = -data_v
 
         # Handle rotation and shift
@@ -602,22 +626,22 @@ def server(input, output, session):
         dy_value = input.dy()
         apix_value = input.apix()
         
-        print(f"Transform parameters - Angle: {angle_value}, Dx: {dx_value}, Dy: {dy_value}, Apix: {apix_value}")
+        # print(f"Transform parameters - Angle: {angle_value}, Dx: {dx_value}, Dy: {dy_value}, Apix: {apix_value}")
 
         if (angle_value or dx_value or dy_value) and data_v is not None:
-            print("Applying rotation and shift.")
+            # print("Applying rotation and shift.")
             data_v = rotate_shift_image(
                 data_v, 
                 angle=-angle_value, 
                 post_shift=(dy_value / apix_value, dx_value / apix_value), 
                 order=1
             )
-            print("Rotation and shift applied.")
+            # print("Rotation and shift applied.")
 
         # Update the reactive `data` object
         if data_v is not None:
             data.set(data_v)
-            print("Updated data reactive with transformed data_v.")
+            # print("Updated data reactive with transformed data_v.")
    
 
 
@@ -695,7 +719,7 @@ def server(input, output, session):
                                 ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
                                 ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
                                 ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
-                                ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
+                                ui.input_numeric("mask_len", "ask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
                                 value="image_parameters_emd"
                             )
                         )             
