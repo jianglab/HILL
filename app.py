@@ -117,6 +117,9 @@ selected_image_labels = reactive.value([])
 first_point = reactive.Value(None)
 second_point = reactive.Value(None)
 
+file_name_download = reactive.Value(None)
+
+
 apix_auto = reactive.value(0)
 negate_auto = reactive.value(0)
 angle_auto = reactive.value(0)
@@ -145,6 +148,11 @@ max_rise = reactive.value(0.0)
 
 is_3d_reactive = reactive.value(None)
 data = reactive.value(None)
+
+has_executed_auto_mask_radius = reactive.Value(False)
+has_executed_angle = reactive.Value(False)
+
+
 
 
 # my code
@@ -422,6 +430,7 @@ def server(input, output, session):
                             ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
                             ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
                             ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
+                            ui.output_ui("download_symmetrized_map"),
                             value="2D_projection"
                         )
                 ),
@@ -474,16 +483,10 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(input.is_3d, angle_auto, apix_reactive, dx_auto, nx, ny, mask_radius_auto, mask_len_percent_auto)
+    @reactive.event(input.input_type, input.is_3d, apix_auto, negate_auto, nx, ny, mask_len_percent_auto, mask_radius_auto, angle_auto, dx_auto)
+    # angle_auto, dx_auto, mask_radius_auto--> add data copies?
     def image_para_values():
         # TODO: ISSUE HAS SOMETHING TO DO WITH THIS FUNCTION
-        # print("1: ", mask_radius_auto()*apix_reactive())
-        # print("2: ", nx()/2*apix_reactive())
-        # print("nx, ny: ", nx(), ny())
-        # print("apix: ", apix_reactive())
-        # print("mask radius: ", mask_radius_auto())
-
-
         value = input.input_type()
 
         if value in ['image']:
@@ -559,25 +562,28 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.input_type, data, selected_images)
     def set_angle_auto():
-        mode = input.input_type() 
+        if not has_executed_angle():
+            mode = input.input_type()
 
-        if mode in ["PS", "PD"]:
-            angle_auto.set(0.0)
-            dx_auto.set(0.0)
-        elif is_3d_reactive():
-            angle_auto.set(0.0)
-            dx_auto.set(0.0)
-        elif selected_images() and len(selected_images()) > 0 and data() is not None:
-            ang_auto_v, dx_auto_v = auto_vertical_center(selected_images()[0])# data())
-            angle_auto.set(ang_auto_v)
-            dx_auto.set(dx_auto_v)
+            if mode in ["PS", "PD"]:
+                angle_auto.set(0.0)
+                dx_auto.set(0.0)
+                has_executed_angle.set(True)
+            elif is_3d_reactive():
+                angle_auto.set(0.0)
+                dx_auto.set(0.0)
+                has_executed_angle.set(True)
+            elif selected_images() and len(selected_images()) > 0 and data() is not None:
+                ang_auto_v, dx_auto_v = auto_vertical_center(selected_images()[0])
+                angle_auto.set(ang_auto_v)
+                dx_auto.set(dx_auto_v)
+                has_executed_angle.set(True)
 
-        if selected_images() and len(selected_images()) > 0:
-            aspect_ratio = float(nx() / ny())
-        
-        if input.straightening() and aspect_ratio < 1 and selected_images() and len(selected_images()) > 0:
-            aspect_ratio = float(nx() / ny())
-            angle_auto.set(0.0)
+            if selected_images() and len(selected_images()) > 0:
+                aspect_ratio = float(nx() / ny())
+            
+                if input.straightening() and aspect_ratio < 1:
+                    angle_auto.set(0.0)
 
         # print("angle auto: ", angle_auto())
 
@@ -586,17 +592,19 @@ def server(input, output, session):
     @reactive.event(input.input_type, selected_images, data)
     def set_mask_radius_auto(): 
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
-        input_type = input.input_type()
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data() is not None:
-            radius_auto_v, mask_radius_auto_v = estimate_radial_range(data(), thresh_ratio=0.1)
-            # print("mask radius", mask_radius_auto_v)
-            mask_radius_auto.set(mask_radius_auto_v)
-            radius_auto.set(radius_auto_v)
+        if not has_executed_auto_mask_radius():
+            input_type = input.input_type()
+            if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data() is not None:
+                radius_auto_v, mask_radius_auto_v = estimate_radial_range(data(), thresh_ratio=0.1)
+                mask_radius_auto.set(mask_radius_auto_v)
+                radius_auto.set(radius_auto_v)
+                # Set the flag to indicate we've executed
+                has_executed_auto_mask_radius.set(True)
 
-        mask_len_percent_auto_v = 90.0
-        if input.straightening():
-            mask_len_percent_auto_v = 100.0
-        mask_len_percent_auto.set(mask_len_percent_auto_v)
+            mask_len_percent_auto_v = 90.0
+            if input.straightening():
+                mask_len_percent_auto_v = 100.0
+            mask_len_percent_auto.set(mask_len_percent_auto_v)
 
     
     @reactive.Effect
@@ -738,7 +746,7 @@ def server(input, output, session):
             return ui.TagList(
                     # HOW TO GET THE FOLLOWING SESSION STATE VALUES:
                     # ui.input_numeric("twist_ahs", "Twist (°):", value=???, min=-180.0, max=180.0, step=1.0),
-                    # ui.input_numeric("rise_ahs", "Rise (Å):", value=???, min=0.0, step=1.0),
+                    ui.input_numeric("rise_ahs", "Rise (Å):", value=1, min=0.0, step=1.0), # temp
                     # ui.input_numeric("csym_ahs", "Csym:", value=???, min=1, step=1),
                     ui.input_numeric("apix_map", "Current map pixel size (Å):", value=apix_auto(), min=0.0, step=1.0),
                     ui.output_ui("update_apix_map_vals"),
@@ -769,7 +777,63 @@ def server(input, output, session):
             ui.input_numeric("width_ahs", "Box width (Å):", value=input.apix_map()*nx(), min=0.0, step=1.0),
         )
 
+  
+    @reactive.Effect
+    @reactive.event(input.apply_helical_sym, input.rise_ahs)
+    def download_symmetrized_map_ui():
+        if input.apply_helical_sym() and input.rise_ahs():
+            # nz_ahs = round(input.length_ahs() / input.apix_ahs()) // 2 * 2
+            # nyx_ahs = round(input.width_ahs() / input.apix_ahs()) // 2 * 2
+            
+            # TODO: fix this when the inputs for dropdown are completed
+            nz_ahs = 1
+            nyx_ahs = 1
 
+            # Apply helical symmetry
+            data_all_v = apply_helical_symmetry(
+                data=data_all(),
+                apix=input.apix_map(),
+                twist=input.twist_ahs(),
+                rise=input.rise_ahs(),
+                csym=input.csym_ahs(),
+                fraction=input.fraction_ahs(),
+                new_size=(nz_ahs, nyx_ahs, nyx_ahs),
+                new_apix=input.apix_ahs(),
+            )
+
+            data_all.set(data_all_v)
+            apix_auto.set(input.apix_ahs())
+
+            file_name = "helical_symmetrized.mrc.gz"
+            with mrcfile.new(file_name, compression="gzip", overwrite=True) as mrc:
+                mrc.set_data(data_all.astype(np.float32))
+                mrc.voxel_size = input.apix_ahs()
+            
+            file_name_download.set(file_name)
+
+            print("got here!!")
+            
+
+    @output
+    @render.ui
+    @reactive.event(input.apply_helical_sym, input.rise_ahs, file_name_download)
+    def download_symmetrized_map():
+        if input.apply_helical_sym() and input.rise_ahs() and file_name_download():
+            print("in downloaded!!")
+            return ui.TagList(
+                ui.download_button(
+                    "Download symmetrized map",
+                    open(file_name_download(), "rb"),
+                    file_name=file_name_download(),
+                )
+            )
+        else:
+            return ui.TagList(
+                ui.p("Symmetrized map not generated. Adjust parameters and try again.")
+            )
+    
+    
+    
     @reactive.effect
     @reactive.event(data_all) # , input.ignore_blank)
     def get_displayed_class_images():
