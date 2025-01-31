@@ -117,6 +117,9 @@ selected_image_labels = reactive.value([])
 first_point = reactive.Value(None)
 second_point = reactive.Value(None)
 
+file_name_download = reactive.Value(None)
+
+
 apix_auto = reactive.value(0)
 negate_auto = reactive.value(0)
 angle_auto = reactive.value(0)
@@ -146,14 +149,13 @@ max_rise = reactive.value(0.0)
 is_3d_reactive = reactive.value(None)
 data = reactive.value(None)
 
-
-user_inputs = reactive.value({
-    'apix': None,
-    'angle': None,
-    'dx': None,
-    'dy': None,
-    'mask_radius': None
-})
+# flags for sidebar input initial values
+has_executed_auto_mask_radius = reactive.Value(False)
+has_executed_angle = reactive.Value(False)
+has_executed_apix_reactive = reactive.Value(False)
+previous_input_type = reactive.Value(None)
+has_executed_pixel_reactive = reactive.Value(False)
+apix_reactive_second = reactive.Value(None)
 
 
 
@@ -432,6 +434,7 @@ def server(input, output, session):
                             ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
                             ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
                             ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
+                            ui.output_ui("download_symmetrized_map"),
                             value="2D_projection"
                         )
                 ),
@@ -470,268 +473,91 @@ def server(input, output, session):
 
     # updating apix value
     @reactive.Effect
-    @reactive.event(input.input_type, input.apix)
+    @reactive.event(input.input_type , input.apix)
     def set_apix():
         input_type = input.input_type()
         apix_value = input.apix()
         
         if input_type in ["PS", "PD"]:
             apix_reactive.set(apix_value * 0.5)
+            print("1: ", apix_reactive())
+            # has_executed_apix_reactive.set(True)
             return apix_value * 0.5
         
         apix_reactive.set(apix_value)
+        # has_executed_apix_reactive.set(True)
+        print("2: ", apix_reactive())
         return apix_value
 
-    @reactive.Effect
-    @reactive.event(input.input_type, selected_images)
-    def reset_on_input_type_change():
-        """Reset user inputs when input type changes"""
-        if selected_images() and len(selected_images()) > 0:
-            user_inputs.set({
-                'apix': None,
-                'angle': None,
-                'dx': None,
-                'dy': None,
-                'mask_radius': None
-            })
 
-    @reactive.Calc
-    def get_apix():
-        """Get the current apix value based on user input or auto calculation"""
-        user_apix = user_inputs()['apix']
-        if user_apix is not None:
-            return user_apix
-            
-        input_type = input.input_type()
-        auto_val = apix_auto()
-        
-        if input_type in ["PS", "PD"]:
-            return auto_val * 0.5
-        return auto_val
+    # @reactive.Effect
+    # @reactive.event(apix_reactive)
+    # def set_second_apix_reaction():
+    #     if not has_executed_apix_reactive():
+    #         apix_reactive_second.set(apix_reactive())
 
-    @reactive.Calc
-    def get_angle():
-        """Get the current angle value based on user input or auto calculation"""
-        user_angle = user_inputs()['angle']
-        if user_angle is not None:
-            return user_angle
-        return -angle_auto()
-
-    @reactive.Calc
-    def get_dx():
-        """Get the current dx value based on user input or auto calculation"""
-        user_dx = user_inputs()['dx']
-        if user_dx is not None:
-            return user_dx
-        return dx_auto() * get_apix()
-
-    @reactive.Calc
-    def get_dy():
-        """Get the current dy value based on user input or auto calculation"""
-        user_dy = user_inputs()['dy']
-        if user_dy is not None:
-            return user_dy
-        return 0.0
-
-    @reactive.Calc
-    # @reactive.event(get_apix) # RIGHT NOW: mask_radius_auto
-    def get_mask_radius():
-        """Get the current mask radius based on user input or auto calculation"""
-        user_radius = user_inputs()['mask_radius']
-        if user_radius is not None:
-            return user_radius
-            
-        input_type = input.input_type()
-        if input_type in ["PS", "PD"]:
-            return 0.0  # No mask radius needed for PS/PD
-            
-        # Only calculate mask radius for 'image' type
-        auto_radius = mask_radius_auto() * get_apix()
-        max_radius = nx()/2 * get_apix()
-        return min(auto_radius, max_radius)
-
-    # Handle user input changes
-    @reactive.Effect
-    @reactive.event(input.apix)
-    def update_user_apix():
-        current = user_inputs()
-        current['apix'] = input.apix()
-        user_inputs.set(current)
 
     @reactive.Effect
-    @reactive.event(input.angle)
-    def update_user_angle():
-        current = user_inputs()
-        current['angle'] = input.angle()
-        user_inputs.set(current)
+    def monitor_apix_changes():
+        current_apix = apix_reactive()
+        current_mask = mask_radius_auto()
+        current_dx_auto = dx_auto()
 
-    @reactive.Effect
-    @reactive.event(input.dx)
-    def update_user_dx():
-        current = user_inputs()
-        current['dx'] = input.dx()
-        user_inputs.set(current)
 
-    @reactive.Effect
-    @reactive.event(input.dy)
-    def update_user_dy():
-        current = user_inputs()
-        current['dy'] = input.dy()
-        user_inputs.set(current)
+        ui.update_numeric("dx", 
+                     value=current_dx_auto*current_apix,
+                     min=-nx()*current_apix,
+                     max=nx()*current_apix)
 
-    @reactive.Effect
-    @reactive.event(input.mask_radius)
-    def update_user_mask_radius():
-        current = user_inputs()
-        current['mask_radius'] = input.mask_radius()
-        user_inputs.set(current)
-
-    @reactive.Effect
-    @reactive.event(input.input_mode_params, input.url_params, input.upload_classes)
-    def reset_user_inputs():
-        """Reset user inputs when loading new data"""
-        user_inputs.set({
-            'apix': None,
-            'angle': None,
-            'dx': None,
-            'dy': None,
-            'mask_radius': None
-        })
+        ui.update_numeric("mask_radius",
+                     value=min(current_mask*current_apix, nx()/2*current_apix),
+                     max=nx()/2*current_apix)
 
     @output
     @render.ui
+    @reactive.event(input.input_type, input.is_3d, apix_auto, negate_auto, nx, ny, mask_len_percent_auto) # , angle_auto) # , dx_auto) # , mask_radius_auto)
+    # angle_auto, dx_auto, mask_radius_auto--> add data copies?
     def image_para_values():
-        value = input.input_type()
+        # TODO: ISSUE HAS SOMETHING TO DO WITH THIS FUNCTION
+        print("1: ", mask_radius_auto()*apix_reactive())
+        print("2: ", nx()/2*apix_reactive())
+        print("nx, ny: ", nx(), ny())
+        print("apix: ", apix_reactive())
+        print("mask radius: ", mask_radius_auto())
 
+
+
+        value = input.input_type()
+        print("image params: ", apix_reactive())
         if value in ['image']:
             return ui.TagList(
-                ui.input_numeric(
-                    "apix", 
-                    "Pixel size (Å/pixel)", 
-                    value=get_apix(),
-                    min=0.1, 
-                    max=30.0, 
-                    step=0.01
-                ),
-                ui.output_ui("add_transpose"),
-                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
-                ui.input_checkbox("straightening", "Straighten the filament", value=False),
-                ui.input_numeric(
-                    "angle", 
-                    "Rotate (°)", 
-                    value=get_angle(),
-                    min=-180.0, 
-                    max=180.0, 
-                    step=1.0
-                ),
-                ui.input_numeric(
-                    "dx", 
-                    "Shift along X-dim (Å)", 
-                    value=get_dx(),
-                    min=-nx()*get_apix(), 
-                    max=nx()*get_apix(), 
-                    step=1.0
-                ),
-                ui.input_numeric(
-                    "dy", 
-                    "Shift along Y-dim (Å)", 
-                    value=get_dy(),
-                    min=-ny()*get_apix(), 
-                    max=ny()*get_apix(), 
-                    step=1.0
-                ),
-                ui.input_numeric(
-                    "mask_radius", 
-                    "Mask radius (Å)", 
-                    value=get_mask_radius(),
-                    min=1.0, 
-                    max=nx()/2*get_apix(), 
-                    step=1.0
-                ),
-                ui.input_numeric(
-                    "mask_len", 
-                    "Mask length (%)", 
-                    value=mask_len_percent_auto(), 
-                    min=10.0, 
-                    max=100.0, 
-                    step=1.0
-                ),
+                            ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
+                            ui.output_ui("add_transpose"),
+                            ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
+                            ui.input_checkbox("straightening", "Straighten the filament", value=False),
+                            ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                            ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                            ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
+                            ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
+                            ui.input_numeric("mask_len", "Mask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
             )
         elif value in ['PS', 'PD']:
             return ui.TagList(
-                ui.input_numeric(
-                    "apix", 
-                    "Nyquist res (Å)", 
-                    value=2*apix_auto(),
-                    min=0.1, 
-                    max=30.0, 
-                    step=0.01
-                ),
-                ui.output_ui("add_transpose"),
-                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
-                ui.input_numeric(
-                    "angle", 
-                    "Rotate (°)", 
-                    value=get_angle(),
-                    min=-180.0, 
-                    max=180.0, 
-                    step=1.0
-                ),
-                ui.input_numeric(
-                    "dx", 
-                    "Shift along X-dim (Å)", 
-                    value=get_dx(),
-                    min=-nx()*get_apix(), 
-                    max=nx()*get_apix(), 
-                    step=1.0
-                ),
-                ui.input_numeric(
-                    "dy", 
-                    "Shift along Y-dim (Å)", 
-                    value=get_dy(),
-                    min=-ny()*get_apix(), 
-                    max=ny()*get_apix(), 
-                    step=1.0
-                ),
+                            ui.input_numeric("apix", "Nyquist res (Å)", value=2*apix_auto(), min=0.1, max=30.0, step=0.01),
+                            ui.output_ui("add_transpose"),
+                            ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
+                            ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
+                            ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
+                            ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
             )
-
-    @reactive.Effect
-    @reactive.event(input.angle, input.dx, input.dy, input.apix)
-    def set_data():
-        if selected_images() and len(selected_images()) > 0:
-            data_v = selected_images()[0]
-
-            if input.is_3d() and input.transpose():
-                data_v = data_v.T
-            
-            if input.negate():
-                data_v = -data_v
-
-            # Use the getter functions to get current values
-            angle_value = get_angle()
-            dx_value = get_dx()
-            dy_value = get_dy()
-            apix_value = get_apix()
-
-            if (angle_value or dx_value or dy_value):
-                data_v = rotate_shift_image(
-                    data_v, 
-                    angle=-angle_value, 
-                    post_shift=(dy_value / apix_value, dx_value / apix_value), 
-                    order=1
-                )
-
-            data.set(data_v)
-
 
 
     @output
     @render.ui
     @reactive.event(input.is_3d)
     def add_transpose():
-        ####### CONTINUE FROM HERE!!
         transpose_auto = input.input_mode_params() not in [2, 3] and nx() > ny()
-        print("is_3d: ", input.is_3d())
+        
         if input.is_3d():
             return ui.TagList(
                     ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
@@ -746,13 +572,6 @@ def server(input, output, session):
 
         if mode == "1": # upload
             pass
-
-            fileobj = input.upload_classes()
-            data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_uploaded_file(fileobj)
-            apix_auto.set(apix_auto_v)
-
-            # is_3d_auto = guess_if_3d(filename=fileobj.name, data=data_all())
-            # is_3d_reactive.set(is_3d_auto)
         elif mode == "2": # url
             image_url = input.url_params()
             data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_url(image_url)
@@ -776,25 +595,28 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.input_type, data, selected_images)
     def set_angle_auto():
-        mode = input.input_type() 
+        if not has_executed_angle():
+            mode = input.input_type()
 
-        if mode in ["PS", "PD"]:
-            angle_auto.set(0.0)
-            dx_auto.set(0.0)
-        elif is_3d_reactive():
-            angle_auto.set(0.0)
-            dx_auto.set(0.0)
-        elif selected_images() and len(selected_images()) > 0 and data() is not None:
-            ang_auto_v, dx_auto_v = auto_vertical_center(selected_images()[0])# data())
-            angle_auto.set(ang_auto_v)
-            dx_auto.set(dx_auto_v)
+            if mode in ["PS", "PD"]:
+                angle_auto.set(0.0)
+                dx_auto.set(0.0)
+                has_executed_angle.set(True)
+            elif is_3d_reactive():
+                angle_auto.set(0.0)
+                dx_auto.set(0.0)
+                has_executed_angle.set(True)
+            elif selected_images() and len(selected_images()) > 0 and data() is not None:
+                ang_auto_v, dx_auto_v = auto_vertical_center(selected_images()[0])
+                angle_auto.set(ang_auto_v)
+                dx_auto.set(dx_auto_v)
+                has_executed_angle.set(True)
 
-        if selected_images() and len(selected_images()) > 0:
-            aspect_ratio = float(nx() / ny())
-        
-        if input.straightening() and aspect_ratio < 1 and selected_images() and len(selected_images()) > 0:
-            aspect_ratio = float(nx() / ny())
-            angle_auto.set(0.0)
+            if selected_images() and len(selected_images()) > 0:
+                aspect_ratio = float(nx() / ny())
+            
+                if input.straightening() and aspect_ratio < 1:
+                    angle_auto.set(0.0)
 
         # print("angle auto: ", angle_auto())
 
@@ -803,17 +625,19 @@ def server(input, output, session):
     @reactive.event(input.input_type, selected_images, data)
     def set_mask_radius_auto(): 
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
-        input_type = input.input_type()
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data() is not None:
-            radius_auto_v, mask_radius_auto_v = estimate_radial_range(data(), thresh_ratio=0.1)
-            print("radius_auto_v, mask_radius_auto_v", radius_auto_v, mask_radius_auto_v)
-            mask_radius_auto.set(mask_radius_auto_v)
-            radius_auto.set(radius_auto_v)
+        if not has_executed_auto_mask_radius():
+            input_type = input.input_type()
+            if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data() is not None:
+                radius_auto_v, mask_radius_auto_v = estimate_radial_range(data(), thresh_ratio=0.1)
+                mask_radius_auto.set(mask_radius_auto_v)
+                radius_auto.set(radius_auto_v)
+                # Set the flag to indicate we've executed
+                has_executed_auto_mask_radius.set(True)
 
-        mask_len_percent_auto_v = 90.0
-        if input.straightening():
-            mask_len_percent_auto_v = 100.0
-        mask_len_percent_auto.set(mask_len_percent_auto_v)
+            mask_len_percent_auto_v = 90.0
+            if input.straightening():
+                mask_len_percent_auto_v = 100.0
+            mask_len_percent_auto.set(mask_len_percent_auto_v)
 
     
     @reactive.Effect
@@ -955,7 +779,7 @@ def server(input, output, session):
             return ui.TagList(
                     # HOW TO GET THE FOLLOWING SESSION STATE VALUES:
                     # ui.input_numeric("twist_ahs", "Twist (°):", value=???, min=-180.0, max=180.0, step=1.0),
-                    # ui.input_numeric("rise_ahs", "Rise (Å):", value=???, min=0.0, step=1.0),
+                    ui.input_numeric("rise_ahs", "Rise (Å):", value=1, min=0.0, step=1.0), # temp
                     # ui.input_numeric("csym_ahs", "Csym:", value=???, min=1, step=1),
                     ui.input_numeric("apix_map", "Current map pixel size (Å):", value=apix_auto(), min=0.0, step=1.0),
                     ui.output_ui("update_apix_map_vals"),
@@ -986,7 +810,63 @@ def server(input, output, session):
             ui.input_numeric("width_ahs", "Box width (Å):", value=input.apix_map()*nx(), min=0.0, step=1.0),
         )
 
+  
+    @reactive.Effect
+    @reactive.event(input.apply_helical_sym, input.rise_ahs)
+    def download_symmetrized_map_ui():
+        if input.apply_helical_sym() and input.rise_ahs():
+            # nz_ahs = round(input.length_ahs() / input.apix_ahs()) // 2 * 2
+            # nyx_ahs = round(input.width_ahs() / input.apix_ahs()) // 2 * 2
+            
+            # TODO: fix this when the inputs for dropdown are completed
+            nz_ahs = 1
+            nyx_ahs = 1
 
+            # Apply helical symmetry
+            data_all_v = apply_helical_symmetry(
+                data=data_all(),
+                apix=input.apix_map(),
+                twist=input.twist_ahs(),
+                rise=input.rise_ahs(),
+                csym=input.csym_ahs(),
+                fraction=input.fraction_ahs(),
+                new_size=(nz_ahs, nyx_ahs, nyx_ahs),
+                new_apix=input.apix_ahs(),
+            )
+
+            data_all.set(data_all_v)
+            apix_auto.set(input.apix_ahs())
+
+            file_name = "helical_symmetrized.mrc.gz"
+            with mrcfile.new(file_name, compression="gzip", overwrite=True) as mrc:
+                mrc.set_data(data_all.astype(np.float32))
+                mrc.voxel_size = input.apix_ahs()
+            
+            file_name_download.set(file_name)
+
+            print("got here!!")
+            
+
+    @output
+    @render.ui
+    @reactive.event(input.apply_helical_sym, input.rise_ahs, file_name_download)
+    def download_symmetrized_map():
+        if input.apply_helical_sym() and input.rise_ahs() and file_name_download():
+            print("in downloaded!!")
+            return ui.TagList(
+                ui.download_button(
+                    "Download symmetrized map",
+                    open(file_name_download(), "rb"),
+                    file_name=file_name_download(),
+                )
+            )
+        else:
+            return ui.TagList(
+                ui.p("Symmetrized map not generated. Adjust parameters and try again.")
+            )
+    
+    
+    
     @reactive.effect
     @reactive.event(data_all) # , input.ignore_blank)
     def get_displayed_class_images():
@@ -1090,6 +970,24 @@ def server(input, output, session):
             if selected:
                 update_dimensions(selected[0])
             
+    @reactive.Effect
+    @reactive.event(input.input_type)
+    def reset_on_input_type_change():
+        current_type = input.input_type()
+        if previous_input_type() is not None and current_type != previous_input_type():
+            has_executed_auto_mask_radius.set(False)
+            has_executed_angle.set(False)
+            # has_executed_pixel_reactive.set(False)
+        previous_input_type.set(current_type)
+
+
+    @reactive.Effect
+    @reactive.event(data)
+    def reset_on_input_type_change():
+        previous_input_type.set(None)
+        has_executed_auto_mask_radius.set(False)
+        has_executed_angle.set(False)
+
 
     @reactive.Effect
     @reactive.event(input.run)
@@ -1142,7 +1040,7 @@ def server(input, output, session):
     def display_micrograph():
         images = selected_images()
         if not images:  # Check for None or empty list
-            return None # px.scatter(title="No image selected")
+            return px.scatter(title="No image selected")
 
         h, w = selected_images()[0].shape[:2]
         nx.set(h)
@@ -1182,7 +1080,7 @@ def server(input, output, session):
     def transformed_display_micrograph():
         images = selected_images()
         if not images:
-            return None # px.scatter(title="No image selected")
+            return px.scatter(title="No image selected")
 
         h, w = selected_images()[0].shape[:2]
         nx.set(h)
@@ -1221,22 +1119,6 @@ def server(input, output, session):
         return fig
     
 
-    # @reactive.Calc
-    # def mask_parameters():
-    #     images = selected_images()
-    #     if not images:
-    #         return px.scatter(title="No image selected")
-        
-    #     data = selected_images()[0]
-
-    #     straightening = input.straightening()
-    #     radius_auto, mask_radius_auto_v = estimate_radial_range(data)
-    #     mask_radius_auto.set(mask_radius_auto_v)
-    #     mask_radius = input.mask_radius()
-    #     mask_len_percent_auto_v = 100.0 if straightening else 90.0
-    #     mask_len_percent_auto.set(mask_len_percent_auto_v)
-    #     mask_len_fraction = input.mask_len() / 100.0
-    #     return mask_radius, mask_len_fraction
 
     @render_plotly
     @reactive.event(selected_images)
@@ -1244,7 +1126,7 @@ def server(input, output, session):
         images = selected_images()
         if not images:
             #print("No selected images!")
-            return None # px.scatter(title="No image selected")
+            return px.scatter(title="No image selected")
         
         data = selected_images()[0]
         mask_radius = mask_radius_auto()
@@ -1320,7 +1202,7 @@ def server(input, output, session):
         xmax, y, acf = acf_data()
 
         if xmax is None or y is None:
-            return None # px.scatter(title="No valid data available")
+            return px.scatter(title="No valid data available")
 
         fig = go.Figure()
 
@@ -2437,3 +2319,9 @@ def filament_straighten(_disp_col,data,tck,new_xs,ys,r_filament_pixel_display,ap
     #    st.bokeh_chart(fig, use_container_width=True)
 
     return new_im
+
+
+
+
+
+
