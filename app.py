@@ -145,6 +145,7 @@ max_rise = reactive.value(0.0)
 
 is_3d_reactive = reactive.value(None)
 data = reactive.value(None)
+data_transform = reactive.value(None)
 
 
 user_inputs = reactive.value({
@@ -695,33 +696,34 @@ def server(input, output, session):
                 ),
             )
 
-    @reactive.Effect
-    @reactive.event(input.angle, input.dx, input.dy, input.apix)
-    def set_data():
-        if selected_images() and len(selected_images()) > 0:
-            data_v = selected_images()[0]
+    # @reactive.Effect
+    # @reactive.event(input.angle, input.dx, input.dy, input.apix)
+    # def set_data():
+    #     if selected_images() and len(selected_images()) > 0:
+    #         data_v = selected_images()[0]
 
-            if input.is_3d() and input.transpose():
-                data_v = data_v.T
+    #         if input.is_3d() and input.transpose():
+    #             data_v = data_v.T
             
-            if input.negate():
-                data_v = -data_v
+    #         if input.negate():
+    #             data_v = -data_v
 
-            # Use the getter functions to get current values
-            angle_value = get_angle()
-            dx_value = get_dx()
-            dy_value = get_dy()
-            apix_value = get_apix()
+    #         # Use the getter functions to get current values
+    #         angle_value = get_angle()
+    #         dx_value = get_dx()
+    #         dy_value = get_dy()
+    #         apix_value = get_apix()
 
-            if (angle_value or dx_value or dy_value):
-                data_v = rotate_shift_image(
-                    data_v, 
-                    angle=-angle_value, 
-                    post_shift=(dy_value / apix_value, dx_value / apix_value), 
-                    order=1
-                )
+    #         if (angle_value or dx_value or dy_value):
+    #             data_v = rotate_shift_image(
+    #                 data_v, 
+    #                 angle=-angle_value, 
+    #                 post_shift=(dy_value / apix_value, dx_value / apix_value), 
+    #                 order=1
+    #             )
 
-            data.set(data_v)
+    #         #data.set(data_v)
+    #         data_transform.set(data_v)
 
 
 
@@ -774,7 +776,7 @@ def server(input, output, session):
     # TODO: make set_apix_auto for emd selection
 
     @reactive.Effect
-    @reactive.event(input.input_type, data, selected_images)
+    @reactive.event(input.input_type, data)
     def set_angle_auto():
         mode = input.input_type() 
 
@@ -800,13 +802,15 @@ def server(input, output, session):
 
 
     @reactive.Effect
-    @reactive.event(input.input_type, selected_images, data)
+    @reactive.event(input.input_type, data_transform)
     def set_mask_radius_auto(): 
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
         input_type = input.input_type()
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data() is not None:
-            radius_auto_v, mask_radius_auto_v = estimate_radial_range(data(), thresh_ratio=0.1)
-            print("radius_auto_v, mask_radius_auto_v", radius_auto_v, mask_radius_auto_v)
+        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None:
+            radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_transform(), thresh_ratio=0.1)
+            print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
+                radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
+
             mask_radius_auto.set(mask_radius_auto_v)
             radius_auto.set(radius_auto_v)
 
@@ -817,7 +821,7 @@ def server(input, output, session):
 
     
     @reactive.Effect
-    @reactive.event(input.angle, input.dx, input.dy, input.apix, selected_images)
+    @reactive.event(input.angle, input.dx, input.dy, input.apix, data)
     def set_data():
         # Initialize data_v
         data_v = None
@@ -858,7 +862,7 @@ def server(input, output, session):
 
         # Update the reactive `data` object
         if data_v is not None:
-            data.set(data_v)
+            data_transform.set(data_v)
             # print("Updated data reactive with transformed data_v.")
    
     # code added from the Helical Pitch Image Selection:
@@ -1089,6 +1093,8 @@ def server(input, output, session):
             )
             if selected:
                 update_dimensions(selected[0])
+
+            data.set(selected[0])
             
 
     @reactive.Effect
