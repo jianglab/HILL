@@ -833,7 +833,7 @@ def server(input, output, session):
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
         input_type = input.input_type()
         print("prev_dx_val, curr_dx_val, dx_auto: ", prev_dx_val(), curr_dx_val(), dx_auto())
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()):
+        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()): # and prev_dx_val() != curr_dx_val()): # or change_image() == 1.0): #(change_image() == 1.0 and prev_dx_val() != curr_dx_val()):
             radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_transform(), thresh_ratio=0.1)
             print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
                 radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
