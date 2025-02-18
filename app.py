@@ -147,6 +147,10 @@ is_3d_reactive = reactive.value(None)
 data = reactive.value(None)
 data_transform = reactive.value(None)
 
+transform_params = reactive.Value(None)
+change_image = reactive.value(0.0)
+prev_dx_val = reactive.Value(-1.0)
+curr_dx_val = reactive.Value(1.0)
 
 user_inputs = reactive.value({
     'apix': None,
@@ -302,6 +306,38 @@ def server(input, output, session):
                 ny.set(image.shape[1])
                 nz.set(image.shape[2])
                 #nz, ny, nx = image.shape
+
+
+    prev_inputs = reactive.Value({
+        'dx': None,
+        'dy': None,
+        'angle': None
+    })
+
+    # Add effect to track input changes
+    @reactive.Effect
+    @reactive.event(input.dx, input.dy, input.angle)
+    def track_input_changes():
+        current_dx = input.dx()
+        current_dy = input.dy()
+        current_angle = input.angle()
+        
+        previous = prev_inputs()
+        
+        # Check if any values have changed
+        if (previous['dx'] is not None and 
+            (current_dx != previous['dx'] or 
+             current_dy != previous['dy'] or 
+             current_angle != previous['angle'])):
+            change_image.set(1.0)
+        
+        # Update previous values
+        prev_inputs.set({
+            'dx': current_dx,
+            'dy': current_dy,
+            'angle': current_angle
+        })
+
 
     @output
     @render.text
@@ -469,6 +505,20 @@ def server(input, output, session):
             )
         
 
+    @reactive.Effect
+    @reactive.event(selected_images)
+    def reset_image_params():
+        """Reset image parameters when a new image is selected."""
+        if selected_images() and len(selected_images()) > 0:
+            user_inputs.set({
+                'apix': None,
+                'angle': None,
+                'dx': None,
+                'dy': None,
+                'mask_radius': None
+            })
+            change_image.set(0.0)
+
     # updating apix value
     @reactive.Effect
     @reactive.event(input.input_type, input.apix)
@@ -535,7 +585,7 @@ def server(input, output, session):
         return 0.0
 
     @reactive.Calc
-    # @reactive.event(get_apix) # RIGHT NOW: mask_radius_auto
+    # @reactive.event(mask_radius_auto) # RIGHT NOW: mask_radius_auto
     def get_mask_radius():
         """Get the current mask radius based on user input or auto calculation"""
         user_radius = user_inputs()['mask_radius']
@@ -549,6 +599,11 @@ def server(input, output, session):
         # Only calculate mask radius for 'image' type
         auto_radius = mask_radius_auto() * get_apix()
         max_radius = nx()/2 * get_apix()
+        print("mask_radius_auto: ", mask_radius_auto())
+        print("get_apix: ", get_apix())
+        print("nx: ", nx())
+        print("first: ", auto_radius)
+        print("second: ", max_radius)
         return min(auto_radius, max_radius)
 
     # Handle user input changes
@@ -696,37 +751,6 @@ def server(input, output, session):
                 ),
             )
 
-    # @reactive.Effect
-    # @reactive.event(input.angle, input.dx, input.dy, input.apix)
-    # def set_data():
-    #     if selected_images() and len(selected_images()) > 0:
-    #         data_v = selected_images()[0]
-
-    #         if input.is_3d() and input.transpose():
-    #             data_v = data_v.T
-            
-    #         if input.negate():
-    #             data_v = -data_v
-
-    #         # Use the getter functions to get current values
-    #         angle_value = get_angle()
-    #         dx_value = get_dx()
-    #         dy_value = get_dy()
-    #         apix_value = get_apix()
-
-    #         if (angle_value or dx_value or dy_value):
-    #             data_v = rotate_shift_image(
-    #                 data_v, 
-    #                 angle=-angle_value, 
-    #                 post_shift=(dy_value / apix_value, dx_value / apix_value), 
-    #                 order=1
-    #             )
-
-    #         #data.set(data_v)
-    #         data_transform.set(data_v)
-
-
-
     @output
     @render.ui
     @reactive.event(input.is_3d)
@@ -776,9 +800,11 @@ def server(input, output, session):
     # TODO: make set_apix_auto for emd selection
 
     @reactive.Effect
-    @reactive.event(input.input_type, data)
+    @reactive.event(input.input_type, data_transform)
     def set_angle_auto():
         mode = input.input_type() 
+
+        prev_dx_val.set(dx_auto())
 
         if mode in ["PS", "PD"]:
             angle_auto.set(0.0)
@@ -797,29 +823,31 @@ def server(input, output, session):
         if input.straightening() and aspect_ratio < 1 and selected_images() and len(selected_images()) > 0:
             aspect_ratio = float(nx() / ny())
             angle_auto.set(0.0)
+        
+        curr_dx_val.set(dx_auto())
 
-        # print("angle auto: ", angle_auto())
-
-
+    # FIXING HERRE
     @reactive.Effect
     @reactive.event(input.input_type, data_transform)
     def set_mask_radius_auto(): 
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
         input_type = input.input_type()
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None:
+        print("prev_dx_val, curr_dx_val, dx_auto: ", prev_dx_val(), curr_dx_val(), dx_auto())
+        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()):
             radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_transform(), thresh_ratio=0.1)
             print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
                 radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
-
-            mask_radius_auto.set(mask_radius_auto_v)
+            print("previous dx: ", prev_dx_val())
+            mask_radius_auto.set( mask_radius_auto_v)
             radius_auto.set(radius_auto_v)
+            change_image.set(0.0)
 
         mask_len_percent_auto_v = 90.0
         if input.straightening():
             mask_len_percent_auto_v = 100.0
         mask_len_percent_auto.set(mask_len_percent_auto_v)
 
-    
+    # FIXING HERE
     @reactive.Effect
     @reactive.event(input.angle, input.dx, input.dy, input.apix, data)
     def set_data():
@@ -850,7 +878,7 @@ def server(input, output, session):
         
         # print(f"Transform parameters - Angle: {angle_value}, Dx: {dx_value}, Dy: {dy_value}, Apix: {apix_value}")
 
-        if (angle_value or dx_value or dy_value) and data_v is not None:
+        if (angle_value or dx_value or dy_value) and data_v is not None and apix_value != 0 and apix_value != 0:
             # print("Applying rotation and shift.")
             data_v = rotate_shift_image(
                 data_v, 
@@ -863,8 +891,16 @@ def server(input, output, session):
         # Update the reactive `data` object
         if data_v is not None:
             data_transform.set(data_v)
+            print("set here")
+
+            if input.dx() != 0:
+                change_image.set(1.0)
             # print("Updated data reactive with transformed data_v.")
    
+
+
+
+
     # code added from the Helical Pitch Image Selection:
     @output
     @render.ui
@@ -958,9 +994,9 @@ def server(input, output, session):
             print("in val")
             return ui.TagList(
                     # HOW TO GET THE FOLLOWING SESSION STATE VALUES:
-                    # ui.input_numeric("twist_ahs", "Twist (°):", value=???, min=-180.0, max=180.0, step=1.0),
-                    # ui.input_numeric("rise_ahs", "Rise (Å):", value=???, min=0.0, step=1.0),
-                    # ui.input_numeric("csym_ahs", "Csym:", value=???, min=1, step=1),
+                    ui.input_numeric("twist_ahs", "Twist (°):", value=1, min=-180.0, max=180.0, step=1.0),
+                    ui.input_numeric("rise_ahs", "Rise (Å):", value=4.75, min=0.0, step=1.0),
+                    ui.input_numeric("csym_ahs", "Csym:", value=1, min=1, step=1),
                     ui.input_numeric("apix_map", "Current map pixel size (Å):", value=apix_auto(), min=0.0, step=1.0),
                     ui.output_ui("update_apix_map_vals"),
                     ui.hr(),
@@ -972,21 +1008,21 @@ def server(input, output, session):
     def update_apix_map_vals():
         return ui.TagList(
             ui.input_numeric("apix_ahs", "New map pixel size (Å):", value=input.apix_map(), min=0.0, step=1.0),
-            # ui.input_numeric(
-            #     "fraction_ahs",
-            #     "Center fraction (0-1):",
-            #     value=1.0,
-            #     min=input.rise_ahs()/(nz()*input.apix_map()),
-            #     max=1.0,
-            #     step=0.1,
-            # ),
-            # ui.input_numeric(
-            #     "length_ahs",
-            #     "Box length (Å):",
-            #     value=input.apix_map()*max(nz(),nx()),
-            #     min=input.rise_ahs(),
-            #     step=1.0,
-            # ),
+            ui.input_numeric(
+                "fraction_ahs",
+                "Center fraction (0-1):",
+                value=1.0,
+                min=input.rise_ahs()/(nz()*input.apix_map()),
+                max=1.0,
+                step=0.1,
+            ),
+            ui.input_numeric(
+                "length_ahs",
+                "Box length (Å):",
+                value=input.apix_map()*max(nz(),nx()),
+                min=input.rise_ahs(),
+                step=1.0,
+            ),
             ui.input_numeric("width_ahs", "Box width (Å):", value=input.apix_map()*nx(), min=0.0, step=1.0),
         )
 
@@ -1226,24 +1262,6 @@ def server(input, output, session):
 
         return fig
     
-
-    # @reactive.Calc
-    # def mask_parameters():
-    #     images = selected_images()
-    #     if not images:
-    #         return px.scatter(title="No image selected")
-        
-    #     data = selected_images()[0]
-
-    #     straightening = input.straightening()
-    #     radius_auto, mask_radius_auto_v = estimate_radial_range(data)
-    #     mask_radius_auto.set(mask_radius_auto_v)
-    #     mask_radius = input.mask_radius()
-    #     mask_len_percent_auto_v = 100.0 if straightening else 90.0
-    #     mask_len_percent_auto.set(mask_len_percent_auto_v)
-    #     mask_len_fraction = input.mask_len() / 100.0
-    #     return mask_radius, mask_len_fraction
-
     @render_plotly
     @reactive.event(selected_images)
     def plot_graph():
