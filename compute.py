@@ -660,8 +660,10 @@ def get_one_map_xyz_projects(map_info): # length_z, map_projection_xyz_choices):
     # if 'x' in map_projection_xyz_choices:
     #     images += [data.sum(axis=2)]
     #     image_labels += [label + ':X']
+    print("data, apix: ", data, apix)
+    print("sum: ", np.sum(data))
         
-    return images, image_labels
+    return images, image_labels, apix
 
 
 def symmetrize_project_align_one_map(map_info, image_query, image_query_label, image_query_apix, rescale_apix, length_xy_factor, match_sf, angle_range, scale_range):

@@ -900,7 +900,7 @@ def server(input, output, session):
 
     # FIXING HERE
     @reactive.Effect
-    @reactive.event(input.angle, input.dx, input.dy, input.apix, data)
+    @reactive.event(input.angle, input.dx, input.dy, input.apix, data, selected_images)
     def set_data():
         # Initialize data_v
         data_v = None
@@ -1066,12 +1066,12 @@ def server(input, output, session):
         msg = ""
 
         arr = [51000, 17729, 15499, 50089, 42931]
-        selected_id = str(random.choice(arr))
+        selected_id = 15499 # str(random.choice(arr))
         print("1")
         # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
         # emd_id.set(key_emd_id().lower().split("emd-")[-1])
         if not key_emd_id() or input.select_emdb():
-            selected_id = str(random.choice(arr))
+            selected_id = str(15499) # str(random.choice(arr))
             key_emd_id.set('emd-' + selected_id)
             emd_id.set(key_emd_id().lower().split("emd-")[-1])
 
@@ -1148,6 +1148,7 @@ def server(input, output, session):
             map_xyz_projections.set([])
             images = []
             image_labels = []
+            apix_val = None
             
             map_xyz_projection_title.set(f"Map Y projections:")
             print("projection err 1")
@@ -1155,13 +1156,18 @@ def server(input, output, session):
                 p.set(message="Generating x/yz/ projections", detail="This may take a while ...")
                 print("projection err 2")
                 for mi, m in enumerate(maps()):
+                    print("M: : ", m)
                     p.set(mi, message=f"{mi+1}/{len(maps())}: x/y/z projecting {m.label}")
                     print("projection err 3")
                     try:
-                        tmp_images, tmp_image_labels = compute.get_one_map_xyz_projects(map_info=m)
+                        tmp_images, tmp_image_labels, apix = compute.get_one_map_xyz_projects(map_info=m)
                         print("projection err 3.5")
+                        # apix_val += apix
                         images += tmp_images
                         image_labels += tmp_image_labels
+
+                        if apix_val is None:
+                            apix_val = apix
                         
                         print(f"Generated {len(tmp_images)} projections for map {m.label}")
                     except Exception as e:
@@ -1170,10 +1176,19 @@ def server(input, output, session):
                 if images:
                     map_xyz_projection_labels.set(image_labels)
                     map_xyz_projections.set(images)
+                    print(np.shape(images))
                     print(f"Set {len(images)} projections in total")
 
                 
                 selected_images.set(map_xyz_projections())
+                # if apix_val is not None:
+                #     Session.update_input("apix", value=apix_val)
+                #     print("apix value set to:", apix_val)
+                # print("apix value: ", apix_val[0])
+                # set apix here
+
+
+                # data.set(map_xyz_projections())
                 print("projection err 5")
         except Exception as e:
             print("Error in get_map_xyz_projections:", e)
@@ -1378,8 +1393,24 @@ def server(input, output, session):
         nx.set(h)
         ny.set(w)
 
+        # images = (selected_images()[0] - min(selected_images()[0])) / (max(selected_images()[0]) - min(selected_images()[0])) * 255
+        # fig = image_trace.plot_micrograph(
+        #     micrograph= np.array(images, dtype=np.uint8)# 255 - selected_images()[0],
+        #     title=f"Original image ({nx()}x{ny()})",
+        #     apix=apix_reactive(),
+        # )
+
+        img = selected_images()[0]
+
+        # Normalize image to [0, 255]
+        img_min = np.min(img)
+        img_max = np.max(img)
+        normalized_img = (img - img_min) / (img_max - img_min) * 255
+        images = normalized_img.astype(np.uint8)
+
+        # Plot the micrograph
         fig = image_trace.plot_micrograph(
-            micrograph=255 - selected_images()[0],
+            micrograph=255 - images,
             title=f"Original image ({nx()}x{ny()})",
             apix=apix_reactive(),
         )
