@@ -152,6 +152,27 @@ change_image = reactive.value(0.0)
 prev_dx_val = reactive.Value(-1.0)
 curr_dx_val = reactive.Value(1.0)
 
+key_emd_id = reactive.Value(None)
+emd_id = reactive.value("")
+prev_emdid = reactive.Value(None)
+csym = reactive.Value(None)
+max_map_size = reactive.Value(None)
+max_map_dim = reactive.Value(None)
+stop_map_size = reactive.Value(None)
+
+
+emdb_df_original = reactive.value(None)
+emdb_df = reactive.value(None)
+emd_url = reactive.value("")
+msg_reactive = reactive.value("")
+
+maps = reactive.value([])
+map_xyz_projections = reactive.value([])
+map_xyz_projection_title = reactive.value("Map XYZ projections:")
+map_xyz_projection_labels = reactive.value([])
+map_xyz_projection_display_size = reactive.value(128)
+
+
 user_inputs = reactive.value({
     'apix': None,
     'angle': None,
@@ -222,6 +243,7 @@ app_ui = ui.page_fluid(
             ),
             ui.output_ui("sidebar_text"),
             class_="custom-sidebar",
+            width = "20vw"
         ),
         ui.row(
             ui.column(12,
@@ -284,7 +306,7 @@ app_ui = ui.page_fluid(
                 )
             )
         ),
-        shiny_test.setup_adjustable_sidebar(width="10vw"),
+        shiny_test.setup_adjustable_sidebar(width="20vw"),
     ),
 )
 
@@ -456,9 +478,34 @@ def server(input, output, session):
 
     @output
     @render.ui
+    def conditional_3D_emd(): 
+        return ui.TagList( 
+                ui.accordion(
+                        ui.accordion_panel(
+                            ui.p("Generate 2-D projection from the 3-D map"),
+                            ui.input_checkbox("apply_helical_sym", "Apply helical symmetry", value=0),
+                            ui.output_ui("helical_sym_output"),
+                            ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
+                            ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
+                            ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
+                            value="2D_projection"
+                        )
+                ),
+                ui.accordion(
+                        ui.accordion_panel(
+                            ui.p("Image Parameters"),
+                            ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
+                            ui.output_ui("image_para_values"),
+                            value="image_parameters_emd"
+                        )
+                )
+        )
+
+    @output
+    @render.ui
     def conditional_3D(): 
         is_3d = input.is_3d()
-
+        prev_emdid.set(None)
         if input.is_3d():
             return ui.TagList( 
                 ui.accordion(
@@ -599,11 +646,11 @@ def server(input, output, session):
         # Only calculate mask radius for 'image' type
         auto_radius = mask_radius_auto() * get_apix()
         max_radius = nx()/2 * get_apix()
-        print("mask_radius_auto: ", mask_radius_auto())
-        print("get_apix: ", get_apix())
-        print("nx: ", nx())
-        print("first: ", auto_radius)
-        print("second: ", max_radius)
+        # print("mask_radius_auto: ", mask_radius_auto())
+        # print("get_apix: ", get_apix())
+        # print("nx: ", nx())
+        # print("first: ", auto_radius)
+        # print("second: ", max_radius)
         return min(auto_radius, max_radius)
 
     # Handle user input changes
@@ -753,11 +800,15 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(input.is_3d)
+    @reactive.event(input.is_3d, input.input_mode_params)
     def add_transpose():
-        ####### CONTINUE FROM HERE!!
         transpose_auto = input.input_mode_params() not in [2, 3] and nx() > ny()
         print("is_3d: ", input.is_3d())
+        if input.input_mode_params() == "3":
+            return ui.TagList(
+                ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
+            )
+
         if input.is_3d():
             return ui.TagList(
                     ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
@@ -833,7 +884,7 @@ def server(input, output, session):
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
         input_type = input.input_type()
         print("prev_dx_val, curr_dx_val, dx_auto: ", prev_dx_val(), curr_dx_val(), dx_auto())
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()): # and prev_dx_val() != curr_dx_val()): # or change_image() == 1.0): #(change_image() == 1.0 and prev_dx_val() != curr_dx_val()):
+        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()):
             radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_transform(), thresh_ratio=0.1)
             print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
                 radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
@@ -941,7 +992,6 @@ def server(input, output, session):
                 ),
                 ui.input_action_button("run", label="Run", style="width: 100%;"),
                 ui.input_checkbox("is_3d", "The input is a 3D map", value=False),
-                # ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
                 ui.output_ui("conditional_3D"),
                 output_widget("display_micrograph"),
                 output_widget("transformed_display_micrograph"),
@@ -951,47 +1001,194 @@ def server(input, output, session):
             )
         elif selection == "3":  # EMD-xxxxx
             return ui.TagList(
+                    ui.output_ui("get_link_emd"),
                     ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
-                    ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"),
-                    ui.p("EMD-10499 | resolution=3.9Å\ntwwist=-31.44° | rise=6.721Å | c2"), # temp values
-                    ui.accordion(
-                        ui.accordion_panel(
-                            ui.p("Generate 2-D projection from the 3-D map"),
-                            ui.input_checkbox("apply_helical_sym", "Apply helical symmetry", value=0),
-                            ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
-                            ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
-                            ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
-                            value="2D_projection_emd"
-                        )
-                    ), 
-                    ui.accordion(
-                            ui.accordion_panel(
-                                ui.p("Image Parameters"),
-                                ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                                ui.input_numeric("apix", "Pixel size (Å/pixel)", value=apix_auto(), min=0.1, max=30.0, step=0.01),
-                                ui.input_checkbox("transpose", "Transpose the image", value=negate_auto()),
-                                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
-                                ui.input_numeric("angle", "Rotate (°)", value=-angle_auto(), min=-180.0, max=180.0, step=1.0),
-                                ui.input_numeric("dx", "Shift along X-dim (Å)", value=dx_auto()*apix_reactive(), min=-nx()*apix_reactive(), max=nx()*apix_reactive(), step=1.0),
-                                ui.input_numeric("dy", "Shift along Y-dim (Å)", value=0.0, min=-ny()*apix_reactive(), max=ny()*apix_reactive(), step=1.0),
-                                ui.input_numeric("mask_radius", "Mask radius (Å)", value=min(mask_radius_auto()*apix_reactive(), nx()/2*apix_reactive()), min=1.0, max=nx()/2*apix_reactive(), step=1.0),
-                                ui.input_numeric("mask_len", "ask length (%)", value=mask_len_percent_auto(), min=10.0, max=100.0, step=1.0),
-                                value="image_parameters_emd"
-                            )
-                        )             
+                    ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-" + emd_id()),
+                    ui.input_action_button("select_emdb", "Select a random EMDB ID", value=False),
+                    ui.output_ui("conditional_3D_emd"),
+                    output_widget("display_micrograph"),
+                    output_widget("transformed_display_micrograph"),
+                    output_widget("plot_graph"),
+                    output_widget("acf_plot"),
+
                 )
             # try to do random input, otherwise it's ok to leave out
         else:
             return ui.p("Please select an option to proceed.")
+
+
+    @reactive.Calc
+    def max_map_set():
+        if is_hosted():
+            max_map_size_t  = mem_quota()/2    # MB
+            max_map_dim_t   = int(pow(max_map_size*pow(2, 20)/4, 1./3.)//10*10)    # pixels in any dimension
+            stop_map_size_t = mem_quota()*0.75 # MB
+
+            max_map_size.set(max_map_size_t)
+            max_map_dim.set(max_map_dim_t)
+            stop_map_size.set(stop_map_size_t)
+        else:
+            max_map_size_t = -1   # no limit
+            max_map_dim_t  = -1
+            max_map_size.set(max_map_size_t)
+            max_map_dim.set(max_map_dim_t)
+        if max_map_size>0:
+            warning_map_size = f"Due to the resource limit, the maximal map size should be {max_map_dim}x{max_map_dim}x{max_map_dim} voxels or less to avoid crashing the server process"
+    
+
+
+    # @reactive.Effect
+    # @reactive.event(input.input_emd)
+    # def update_emd_id():
+    #     # Extract the ID part from the input value (removing "emd-" if present)
+    #     input_value = input.input_emd().lower()
+    #     if input_value.startswith("emd-"):
+    #         new_emd_id = input_value.split("emd-")[1]
+    #     else:
+    #         new_emd_id = input_value
+        
+    #     # Update the reactive value
+    #     emd_id.set(new_emd_id)
+
+
+    @output
+    @render.ui
+    @reactive.event (input.input_mode_params, input.select_emdb, input.input_emd)
+    def get_link_emd():
+        if input.input_mode_params() != "3":
+            print("not emd")
+            return
+        
+        emdb_ids_all, methods, resolutions, _, emdb_ids_helical = get_emdb_ids()
+        url = "https://www.ebi.ac.uk/emdb/search/*%20AND%20structure_determination_method:%22helical%22?rows=10&sort=release_date%20desc"
+        if emdb_ids_helical is None:
+            return
+        msg = ""
+
+        arr = [51000, 17729, 15499, 50089, 42931]
+        selected_id = str(random.choice(arr))
+        print("1")
+        # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
+        # emd_id.set(key_emd_id().lower().split("emd-")[-1])
+        if not key_emd_id() or input.select_emdb():
+            selected_id = str(random.choice(arr))
+            key_emd_id.set('emd-' + selected_id)
+            emd_id.set(key_emd_id().lower().split("emd-")[-1])
+
+            print('2')
+            msg = f'[EMD-{emd_id()}](https://www.ebi.ac.uk/emdb/entry/EMD-{emd_id()})'
+            emd_url.set(msg)
+            resolution = resolutions[emdb_ids_all.index(emd_id())]
+            msg += f' | resolution={resolution}Å'
+            params = get_emdb_helical_parameters(emd_id())
+            print(msg)
+            print("params")
+            print(params)
+
+            if params and ("twist" in params and "rise" in params and "csym" in params):           
+                msg += f"  \ntwist={params['twist']}° | rise={params['rise']}Å"
+                if params.get("csym_known", True): msg += f" | c{params['csym']}"
+                else: msg += " | csym n/a"
+                if emd_id != prev_emdid():
+                    prev_emdid.set(emd_id)
+                    rise.set(params['rise'])
+                    twist.set(params['twist'])
+                    pitch.set(twist2pitch(twist=twist(), rise=rise()))
+                    csym.set(params['csym'])
+            else:
+                msg +=  "  \n*helical params not available*"
+            
+            msg_reactive.set(msg)
+        return ui.TagList(
+                ui.markdown(msg_reactive()),
+                ui.markdown(f'[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
+        )
+
+
+    @reactive.effect
+    @reactive.event(input.input_mode_params, input.input_emd, twist, rise, csym, emd_url)
+    def get_map_from_url():
+        # Check if we're in EMD mode (mode "3")
+        print("begin get_map_from_url")
+        if input.input_mode_params() != "3":
+            print("not emd")
+            return
+            
+        print("running get_map_from_url 1")
+        # Check if required inputs are available
+        if not input.input_emd():
+            print("Missing EMD input")
+            return
+            
+        try:
+            #url = input.input_emd()
+            url = emd_id() # emd_url()
+            label = url.split("/")[-1].split(".")[0]
+            map_info = compute.MapInfo(
+                #url=url,
+                emd_id = emd_id(),
+                twist=twist(), 
+                rise=rise(), 
+                csym=csym(), 
+                label=label
+            )
+            maps.set([map_info])
+            print("Maps set successfully:", maps())
+        except Exception as e:
+            print("Error in get_map_from_url:", e)
+
+    @reactive.effect
+    @reactive.event(maps)
+    def get_map_xyz_projections():
+        try:
+            if not maps() or len(maps()) == 0:
+                print("Maps is empty, cannot generate projections")
+                return
+                
+            map_xyz_projections.set([])
+            images = []
+            image_labels = []
+            
+            map_xyz_projection_title.set(f"Map Y projections:")
+            print("projection err 1")
+            with ui.Progress(min=0, max=len(maps())) as p:
+                p.set(message="Generating x/yz/ projections", detail="This may take a while ...")
+                print("projection err 2")
+                for mi, m in enumerate(maps()):
+                    p.set(mi, message=f"{mi+1}/{len(maps())}: x/y/z projecting {m.label}")
+                    print("projection err 3")
+                    try:
+                        tmp_images, tmp_image_labels = compute.get_one_map_xyz_projects(map_info=m)
+                        print("projection err 3.5")
+                        images += tmp_images
+                        image_labels += tmp_image_labels
+                        
+                        print(f"Generated {len(tmp_images)} projections for map {m.label}")
+                    except Exception as e:
+                        print(f"Error generating projections for map {m.label}:", e)
+                print("projection err 4")
+                if images:
+                    map_xyz_projection_labels.set(image_labels)
+                    map_xyz_projections.set(images)
+                    print(f"Set {len(images)} projections in total")
+
+                
+                selected_images.set(map_xyz_projections())
+                print("projection err 5")
+        except Exception as e:
+            print("Error in get_map_xyz_projections:", e)
+
+
+
 
     @output
     @render.ui
     @reactive.event(input.apply_helical_sym)
     def helical_sym_output():
         value = input.apply_helical_sym()
-        print("here")
+        # print("here")
         if value:
-            print("in val")
+            # print("in val")
             return ui.TagList(
                     # HOW TO GET THE FOLLOWING SESSION STATE VALUES:
                     ui.input_numeric("twist_ahs", "Twist (°):", value=1, min=-180.0, max=180.0, step=1.0),
@@ -1006,6 +1203,9 @@ def server(input, output, session):
     @render.ui
     @reactive.event(input.apix_map)
     def update_apix_map_vals():
+        if nz()*input.apix_map() == 0:
+            return
+        
         return ui.TagList(
             ui.input_numeric("apix_ahs", "New map pixel size (Å):", value=input.apix_map(), min=0.0, step=1.0),
             ui.input_numeric(
@@ -1037,18 +1237,6 @@ def server(input, output, session):
             image_size.set(max(images[0].shape))
 
             update_dimensions(images[0])
-
-            # if input.ignore_blank():
-            #     included = []
-            #     included_images = []
-            #     for i in range(n):
-            #         image = images[i]
-            #         if np.max(image) > np.min(image):
-            #             included.append(i)
-            #             included_images.append(image)
-            #     images = included_images
-            # else:
-            #     included = list(range(n))
 
             included = []
             included_images = []
@@ -1220,18 +1408,23 @@ def server(input, output, session):
     
 
     @render_plotly
-    @reactive.event(selected_images, input.negate)
+    @reactive.event(data_transform, input.negate)
     def transformed_display_micrograph():
-        images = selected_images()
-        if not images:
+        images = data_transform() # selected_images()
+        if data_transform() is None:
             return None # px.scatter(title="No image selected")
 
-        h, w = selected_images()[0].shape[:2]
+        # h, w = selected_images()[0].shape[:2]
+        h, w = data_transform().shape[:2]
         nx.set(h)
         ny.set(w)
 
+        # image_to_display = (
+        #     selected_images()[0] if input.negate() else 255 - selected_images()[0]
+        # )
+
         image_to_display = (
-            selected_images()[0] if input.negate() else 255 - selected_images()[0]
+            data_transform() if input.negate() else 255 - data_transform() #selected_images()[0]
         )
 
         fig = image_trace.plot_micrograph(
@@ -1913,6 +2106,9 @@ def get_emdb_ids():
 
 def get_emdb_helical_parameters(emd_id):
     emdb_helical, emdb_ids_helical = get_emdb_ids()[-2:]
+    # print("emdb helical: ", emdb_helical)
+    # print("emdb_ids_helical: ", emdb_ids_helical)
+
     if emdb_helical is not None and emd_id in emdb_ids_helical:
         row_index = emdb_helical.index[emdb_helical["emdb_id"] == emd_id].tolist()[0]
         row = emdb_helical.iloc[row_index]
@@ -2461,3 +2657,22 @@ def filament_straighten(_disp_col,data,tck,new_xs,ys,r_filament_pixel_display,ap
     #    st.bokeh_chart(fig, use_container_width=True)
 
     return new_im
+
+
+
+
+
+#Helical Projection Helper Functions
+
+
+
+
+
+
+
+
+
+
+
+
+
