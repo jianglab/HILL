@@ -117,13 +117,13 @@ selected_image_labels = reactive.value([])
 first_point = reactive.Value(None)
 second_point = reactive.Value(None)
 
-apix_auto = reactive.value(0)
-negate_auto = reactive.value(0)
-angle_auto = reactive.value(0)
-dx_auto = reactive.value(0)
-dy_auto = reactive.value(0)
-mask_radius_auto = reactive.value(0)
-mask_len_percent_auto = reactive.value(0)
+apix_auto = reactive.value(0.0)
+negate_auto = reactive.value(0.0)
+angle_auto = reactive.value(0.0)
+dx_auto = reactive.value(0.0)
+dy_auto = reactive.value(0.0)
+mask_radius_auto = reactive.value(0.0)
+mask_len_percent_auto = reactive.value(0.0)
 radius_auto = reactive.value(0.0)
 
 apix_value = reactive.value(0.0)
@@ -171,6 +171,7 @@ map_xyz_projections = reactive.value([])
 map_xyz_projection_title = reactive.value("Map XYZ projections:")
 map_xyz_projection_labels = reactive.value([])
 map_xyz_projection_display_size = reactive.value(128)
+recalculate_emd_params = reactive.Value(False)
 
 
 user_inputs = reactive.value({
@@ -646,11 +647,6 @@ def server(input, output, session):
         # Only calculate mask radius for 'image' type
         auto_radius = mask_radius_auto() * get_apix()
         max_radius = nx()/2 * get_apix()
-        # print("mask_radius_auto: ", mask_radius_auto())
-        # print("get_apix: ", get_apix())
-        # print("nx: ", nx())
-        # print("first: ", auto_radius)
-        # print("second: ", max_radius)
         return min(auto_radius, max_radius)
 
     # Handle user input changes
@@ -804,10 +800,10 @@ def server(input, output, session):
     def add_transpose():
         transpose_auto = input.input_mode_params() not in [2, 3] and nx() > ny()
         print("is_3d: ", input.is_3d())
-        if input.input_mode_params() == "3":
-            return ui.TagList(
-                ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
-            )
+        # if input.input_mode_params() == "3":
+        #     return ui.TagList(
+        #         ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
+        #     )
 
         if input.is_3d():
             return ui.TagList(
@@ -853,9 +849,18 @@ def server(input, output, session):
     @reactive.Effect
     @reactive.event(input.input_type, data_transform)
     def set_angle_auto():
+        # if input.input_mode_params() == "3":
+        #     angle_auto.set(0.0)
+        #     dx_auto.set(0.0)
+        #     dy_auto.set(0.0)
+        #     return
+        
         mode = input.input_type() 
 
         prev_dx_val.set(dx_auto())
+
+        # if input.input_mode_params() == "3":
+        #     is_3d_reactive.set(True)
 
         if mode in ["PS", "PD"]:
             angle_auto.set(0.0)
@@ -874,8 +879,16 @@ def server(input, output, session):
         if input.straightening() and aspect_ratio < 1 and selected_images() and len(selected_images()) > 0:
             aspect_ratio = float(nx() / ny())
             angle_auto.set(0.0)
-        
+
+
         curr_dx_val.set(dx_auto())
+        
+        if input.input_mode_params() == "3": # IS THIS OK??
+            angle_auto.set(0.0)
+            # dx_auto.set(0.0)
+            dy_auto.set(0.0)
+        
+        
 
     # FIXING HERRE
     @reactive.Effect
@@ -938,6 +951,15 @@ def server(input, output, session):
                 order=1
             )
             # print("Rotation and shift applied.")
+
+        if (angle_value or dx_value or dy_value) and data_v is not None and apix_value != 0 and apix_value != 0 and is_3d_reactive():
+            # print("Applying rotation and shift.")
+            data_v = rotate_shift_image(
+                data_v, 
+                angle=0, 
+                post_shift=(dy_value / apix_value, 0), 
+                order=1
+            )
 
         # Update the reactive `data` object
         if data_v is not None:
@@ -1162,7 +1184,6 @@ def server(input, output, session):
                     try:
                         tmp_images, tmp_image_labels, apix = compute.get_one_map_xyz_projects(map_info=m)
                         print("projection err 3.5")
-                        # apix_val += apix
                         images += tmp_images
                         image_labels += tmp_image_labels
 
@@ -1178,21 +1199,56 @@ def server(input, output, session):
                     map_xyz_projections.set(images)
                     print(np.shape(images))
                     print(f"Set {len(images)} projections in total")
-
                 
                 selected_images.set(map_xyz_projections())
-                # if apix_val is not None:
-                #     Session.update_input("apix", value=apix_val)
-                #     print("apix value set to:", apix_val)
-                # print("apix value: ", apix_val[0])
-                # set apix here
-
-
-                # data.set(map_xyz_projections())
+                
+                # Add this part to set apix value for EMD files
+                if apix_val is not None:
+                    apix_auto.set(apix_val)
+                    # Reset user inputs to force using auto values
+                    user_inputs.set({
+                        'apix': None,
+                        'angle': None,
+                        'dx': None,
+                        'dy': None,
+                        'mask_radius': None
+                    })
+                    # Force recalculation of auto parameters for EMD
+                    recalculate_emd_params.set(True)
                 print("projection err 5")
         except Exception as e:
             print("Error in get_map_xyz_projections:", e)
 
+
+    @reactive.Effect
+    @reactive.event(recalculate_emd_params, selected_images)
+    def calculate_emd_auto_params():
+        if recalculate_emd_params() and input.input_mode_params() == "3" and selected_images() and len(selected_images()) > 0:
+            # Reset the flag
+            recalculate_emd_params.set(False)
+            
+            # Calculate auto parameters for the selected image
+            selected_img = selected_images()[0]
+            
+            # Calculate angle and dx auto values
+            ang_auto_v, dx_auto_v = auto_vertical_center(selected_img)
+            angle_auto.set(ang_auto_v)
+            dx_auto.set(dx_auto_v)
+            
+            # Calculate mask radius auto values
+            if input.input_type() in ["image"]:
+                # Transform the image with current parameters for proper mask calculation
+                transformed_img = rotate_shift_image(
+                    selected_img, 
+                    angle=-angle_auto(), 
+                    post_shift=(0, dx_auto()), 
+                    order=1
+                )
+                radius_auto_v, mask_radius_auto_v = estimate_radial_range(transformed_img, thresh_ratio=0.1)
+                mask_radius_auto.set(mask_radius_auto_v)
+                radius_auto.set(radius_auto_v)
+            
+            print(f"EMD auto parameters calculated: angle={angle_auto()}, dx={dx_auto()}, mask_radius={mask_radius_auto()}")
 
 
 
@@ -1383,7 +1439,7 @@ def server(input, output, session):
 
     # functions for outputting graphs
     @render_plotly
-    @reactive.event(selected_images)
+    @reactive.event(selected_images, apix_reactive)
     def display_micrograph():
         images = selected_images()
         if not images:  # Check for None or empty list
@@ -1454,9 +1510,17 @@ def server(input, output, session):
         #     selected_images()[0] if input.negate() else 255 - selected_images()[0]
         # )
 
+        img = data_transform()
+        img_min = np.min(img)
+        img_max = np.max(img)
+        normalized_img = (img - img_min) / (img_max - img_min) * 255
+        images = normalized_img.astype(np.uint8)
+
         image_to_display = (
-            data_transform() if input.negate() else 255 - data_transform() #selected_images()[0]
+            images if input.negate() else 255 - data_transform() #selected_images()[0]
         )
+
+        print("image to display: ", image_to_display.shape)
 
         fig = image_trace.plot_micrograph(
             micrograph= image_to_display, #255 - selected_images()[0],
@@ -1487,7 +1551,7 @@ def server(input, output, session):
         return fig
     
     @render_plotly
-    @reactive.event(selected_images)
+    @reactive.event(selected_images, mask_radius_auto, apix_reactive)
     def plot_graph():
         images = selected_images()
         if not images:
@@ -1563,7 +1627,7 @@ def server(input, output, session):
 
 
     @render_plotly
-    @reactive.event(selected_images)
+    @reactive.event(selected_images, apix_reactive)
     def acf_plot():
         xmax, y, acf = acf_data()
 
