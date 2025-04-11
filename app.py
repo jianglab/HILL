@@ -882,10 +882,10 @@ def server(input, output, session):
 
 
         curr_dx_val.set(dx_auto())
-        
+
         if input.input_mode_params() == "3": # IS THIS OK??
             angle_auto.set(0.0)
-            # dx_auto.set(0.0)
+            dx_auto.set(0.0)
             dy_auto.set(0.0)
         
         
@@ -951,15 +951,6 @@ def server(input, output, session):
                 order=1
             )
             # print("Rotation and shift applied.")
-
-        if (angle_value or dx_value or dy_value) and data_v is not None and apix_value != 0 and apix_value != 0 and is_3d_reactive():
-            # print("Applying rotation and shift.")
-            data_v = rotate_shift_image(
-                data_v, 
-                angle=0, 
-                post_shift=(dy_value / apix_value, 0), 
-                order=1
-            )
 
         # Update the reactive `data` object
         if data_v is not None:
@@ -1204,6 +1195,7 @@ def server(input, output, session):
                 
                 # Add this part to set apix value for EMD files
                 if apix_val is not None:
+                    apix_reactive.set(apix_val)
                     apix_auto.set(apix_val)
                     # Reset user inputs to force using auto values
                     user_inputs.set({
@@ -1220,35 +1212,35 @@ def server(input, output, session):
             print("Error in get_map_xyz_projections:", e)
 
 
-    @reactive.Effect
-    @reactive.event(recalculate_emd_params, selected_images)
-    def calculate_emd_auto_params():
-        if recalculate_emd_params() and input.input_mode_params() == "3" and selected_images() and len(selected_images()) > 0:
-            # Reset the flag
-            recalculate_emd_params.set(False)
+    # @reactive.Effect
+    # @reactive.event(recalculate_emd_params, selected_images)
+    # def calculate_emd_auto_params():
+    #     if recalculate_emd_params() and input.input_mode_params() == "3" and selected_images() and len(selected_images()) > 0:
+    #         # Reset the flag
+    #         recalculate_emd_params.set(False)
             
-            # Calculate auto parameters for the selected image
-            selected_img = selected_images()[0]
+    #         # Calculate auto parameters for the selected image
+    #         selected_img = selected_images()[0]
             
-            # Calculate angle and dx auto values
-            ang_auto_v, dx_auto_v = auto_vertical_center(selected_img)
-            angle_auto.set(ang_auto_v)
-            dx_auto.set(dx_auto_v)
+    #         # Calculate angle and dx auto values
+    #         ang_auto_v, dx_auto_v = auto_vertical_center(selected_img)
+    #         angle_auto.set(ang_auto_v)
+    #         dx_auto.set(dx_auto_v)
             
-            # Calculate mask radius auto values
-            if input.input_type() in ["image"]:
-                # Transform the image with current parameters for proper mask calculation
-                transformed_img = rotate_shift_image(
-                    selected_img, 
-                    angle=-angle_auto(), 
-                    post_shift=(0, dx_auto()), 
-                    order=1
-                )
-                radius_auto_v, mask_radius_auto_v = estimate_radial_range(transformed_img, thresh_ratio=0.1)
-                mask_radius_auto.set(mask_radius_auto_v)
-                radius_auto.set(radius_auto_v)
+    #         # Calculate mask radius auto values
+    #         if input.input_type() in ["image"]:
+    #             # Transform the image with current parameters for proper mask calculation
+    #             transformed_img = rotate_shift_image(
+    #                 selected_img, 
+    #                 angle=-angle_auto(), 
+    #                 post_shift=(0, dx_auto()), 
+    #                 order=1
+    #             )
+    #             radius_auto_v, mask_radius_auto_v = estimate_radial_range(transformed_img, thresh_ratio=0.1)
+    #             mask_radius_auto.set(mask_radius_auto_v)
+    #             radius_auto.set(radius_auto_v)
             
-            print(f"EMD auto parameters calculated: angle={angle_auto()}, dx={dx_auto()}, mask_radius={mask_radius_auto()}")
+    #         print(f"EMD auto parameters calculated: angle={angle_auto()}, dx={dx_auto()}, mask_radius={mask_radius_auto()}")
 
 
 
@@ -1495,7 +1487,7 @@ def server(input, output, session):
     
 
     @render_plotly
-    @reactive.event(data_transform, input.negate)
+    @reactive.event(data_transform, input.negate, apix_reactive)
     def transformed_display_micrograph():
         images = data_transform() # selected_images()
         if data_transform() is None:
@@ -1517,15 +1509,17 @@ def server(input, output, session):
         images = normalized_img.astype(np.uint8)
 
         image_to_display = (
-            images if input.negate() else 255 - data_transform() #selected_images()[0]
+            images if input.negate() else 255-images #selected_images()[0]
         )
 
         print("image to display: ", image_to_display.shape)
+        print("average image to display: ", np.average(image_to_display))
+        print("apix_reactive()", apix_reactive())
 
         fig = image_trace.plot_micrograph(
-            micrograph= image_to_display, #255 - selected_images()[0],
+            micrograph= 255 - images, # image_to_display, #255 - selected_images()[0],
             title=f"Transformed image ({nx()}x{ny()})",
-            apix=apix_reactive(),
+            apix= apix_reactive(),
         )
 
         def plot_micrograph_on_click(trace, points, selector):
@@ -1600,8 +1594,6 @@ def server(input, output, session):
                 font=dict(size=14)
             )
         )
-
-
         return fig
 
     @reactive.Calc
@@ -1629,6 +1621,10 @@ def server(input, output, session):
     @render_plotly
     @reactive.event(selected_images, apix_reactive)
     def acf_plot():
+        images = selected_images()
+        if not images:
+            #print("No selected images!")
+            return
         xmax, y, acf = acf_data()
 
         if xmax is None or y is None:
