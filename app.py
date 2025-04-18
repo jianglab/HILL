@@ -608,6 +608,8 @@ def server(input, output, session):
             return auto_val * 0.5
         return auto_val
 
+
+
     @reactive.Calc
     def get_angle():
         """Get the current angle value based on user input or auto calculation"""
@@ -615,6 +617,9 @@ def server(input, output, session):
         if user_angle is not None:
             return user_angle
         return -angle_auto()
+        
+        
+
 
     @reactive.Calc
     def get_dx():
@@ -623,6 +628,7 @@ def server(input, output, session):
         if user_dx is not None:
             return user_dx
         return dx_auto() * get_apix()
+        
 
     @reactive.Calc
     def get_dy():
@@ -631,6 +637,7 @@ def server(input, output, session):
         if user_dy is not None:
             return user_dy
         return 0.0
+        
 
     @reactive.Calc
     # @reactive.event(mask_radius_auto) # RIGHT NOW: mask_radius_auto
@@ -648,6 +655,8 @@ def server(input, output, session):
         auto_radius = mask_radius_auto() * get_apix()
         max_radius = nx()/2 * get_apix()
         return min(auto_radius, max_radius)
+        
+        
 
     # Handle user input changes
     @reactive.Effect
@@ -657,12 +666,16 @@ def server(input, output, session):
         current['apix'] = input.apix()
         user_inputs.set(current)
 
+
+
     @reactive.Effect
     @reactive.event(input.angle)
     def update_user_angle():
         current = user_inputs()
         current['angle'] = input.angle()
         user_inputs.set(current)
+
+
 
     @reactive.Effect
     @reactive.event(input.dx)
@@ -671,12 +684,15 @@ def server(input, output, session):
         current['dx'] = input.dx()
         user_inputs.set(current)
 
+
+
     @reactive.Effect
     @reactive.event(input.dy)
     def update_user_dy():
         current = user_inputs()
         current['dy'] = input.dy()
         user_inputs.set(current)
+        
 
     @reactive.Effect
     @reactive.event(input.mask_radius)
@@ -684,6 +700,7 @@ def server(input, output, session):
         current = user_inputs()
         current['mask_radius'] = input.mask_radius()
         user_inputs.set(current)
+
 
     @reactive.Effect
     @reactive.event(input.input_mode_params, input.url_params, input.upload_classes)
@@ -696,6 +713,8 @@ def server(input, output, session):
             'dy': None,
             'mask_radius': None
         })
+
+        
 
     @output
     @render.ui
@@ -793,6 +812,11 @@ def server(input, output, session):
                     step=1.0
                 ),
             )
+
+
+
+
+
 
     @output
     @render.ui
@@ -1050,20 +1074,6 @@ def server(input, output, session):
     
 
 
-    # @reactive.Effect
-    # @reactive.event(input.input_emd)
-    # def update_emd_id():
-    #     # Extract the ID part from the input value (removing "emd-" if present)
-    #     input_value = input.input_emd().lower()
-    #     if input_value.startswith("emd-"):
-    #         new_emd_id = input_value.split("emd-")[1]
-    #     else:
-    #         new_emd_id = input_value
-        
-    #     # Update the reactive value
-    #     emd_id.set(new_emd_id)
-
-
     @output
     @render.ui
     @reactive.event (input.input_mode_params, input.select_emdb, input.input_emd)
@@ -1079,12 +1089,12 @@ def server(input, output, session):
         msg = ""
 
         arr = [51000, 17729, 15499, 50089, 42931]
-        selected_id = 15499 # str(random.choice(arr))
+        selected_id = 10499 # str(random.choice(arr))
         print("1")
         # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
         # emd_id.set(key_emd_id().lower().split("emd-")[-1])
         if not key_emd_id() or input.select_emdb():
-            selected_id = str(15499) # str(random.choice(arr))
+            selected_id = str(10499) # str(random.choice(arr))
             key_emd_id.set('emd-' + selected_id)
             emd_id.set(key_emd_id().lower().split("emd-")[-1])
 
@@ -1211,36 +1221,6 @@ def server(input, output, session):
         except Exception as e:
             print("Error in get_map_xyz_projections:", e)
 
-
-    # @reactive.Effect
-    # @reactive.event(recalculate_emd_params, selected_images)
-    # def calculate_emd_auto_params():
-    #     if recalculate_emd_params() and input.input_mode_params() == "3" and selected_images() and len(selected_images()) > 0:
-    #         # Reset the flag
-    #         recalculate_emd_params.set(False)
-            
-    #         # Calculate auto parameters for the selected image
-    #         selected_img = selected_images()[0]
-            
-    #         # Calculate angle and dx auto values
-    #         ang_auto_v, dx_auto_v = auto_vertical_center(selected_img)
-    #         angle_auto.set(ang_auto_v)
-    #         dx_auto.set(dx_auto_v)
-            
-    #         # Calculate mask radius auto values
-    #         if input.input_type() in ["image"]:
-    #             # Transform the image with current parameters for proper mask calculation
-    #             transformed_img = rotate_shift_image(
-    #                 selected_img, 
-    #                 angle=-angle_auto(), 
-    #                 post_shift=(0, dx_auto()), 
-    #                 order=1
-    #             )
-    #             radius_auto_v, mask_radius_auto_v = estimate_radial_range(transformed_img, thresh_ratio=0.1)
-    #             mask_radius_auto.set(mask_radius_auto_v)
-    #             radius_auto.set(radius_auto_v)
-            
-    #         print(f"EMD auto parameters calculated: angle={angle_auto()}, dx={dx_auto()}, mask_radius={mask_radius_auto()}")
 
 
 
@@ -1509,7 +1489,7 @@ def server(input, output, session):
         images = normalized_img.astype(np.uint8)
 
         image_to_display = (
-            images if input.negate() else 255-images #selected_images()[0]
+            255-images if input.negate() else images #selected_images()[0]
         )
 
         print("image to display: ", image_to_display.shape)
@@ -1517,7 +1497,7 @@ def server(input, output, session):
         print("apix_reactive()", apix_reactive())
 
         fig = image_trace.plot_micrograph(
-            micrograph= 255 - images, # image_to_display, #255 - selected_images()[0],
+            micrograph= 255 - image_to_display, # image_to_display, #255 - selected_images()[0],
             title=f"Transformed image ({nx()}x{ny()})",
             apix= apix_reactive(),
         )
