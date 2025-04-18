@@ -616,7 +616,10 @@ def server(input, output, session):
         user_angle = user_inputs()['angle']
         if user_angle is not None:
             return user_angle
-        return -angle_auto()
+        if angle_auto() == 0.0:
+            return 0.0
+        
+        return -abs(angle_auto())
         
         
 
