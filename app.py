@@ -1091,11 +1091,18 @@ def server(input, output, session):
         msg = ""
 
         arr = [51000, 17729, 15499, 50089, 42931]
-        selected_id = 10499 # str(random.choice(arr))
+        selected_id = str(10499) # str(random.choice(arr))
         print("1")
         # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
-        # emd_id.set(key_emd_id().lower().split("emd-")[-1])
-        if not key_emd_id() or input.select_emdb():
+
+        id = input.input_emd().lower().split("emd-")[-1]
+        
+        print("id: ", id)
+        if id != selected_id:
+            print("in here 1")
+            emd_id.set(id)
+        elif not key_emd_id() or input.select_emdb():
+            print("in here 2")
             selected_id = str(10499) # str(random.choice(arr))
             key_emd_id.set('emd-' + selected_id)
             emd_id.set(key_emd_id().lower().split("emd-")[-1])
