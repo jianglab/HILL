@@ -34,14 +34,6 @@ from math import fmod
 from os import getpid
 from urllib.parse import parse_qs
 
-# TODO: delete bokeh graphs and reimplement
-from bokeh.events import MouseMove, MouseEnter, DoubleTap
-from bokeh.io import export_png
-from bokeh.layouts import gridplot, column, layout
-from bokeh.models import Button, ColumnDataSource, CustomJS, Label, LinearColorMapper, Slider, Span, Spinner
-from bokeh.models.tools import CrosshairTool, HoverTool
-from bokeh.plotting import figure
-
 from finufft import nufft2d2
 
 from numba import jit, set_num_threads, prange
@@ -242,6 +234,7 @@ app_ui = ui.page_fluid(
                     value="input_mode"
                 )
             ),
+            ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"), #  + emd_id()),
             ui.output_ui("sidebar_text"),
             class_="custom-sidebar",
             width = "20vw"
@@ -1043,7 +1036,6 @@ def server(input, output, session):
             return ui.TagList(
                     ui.output_ui("get_link_emd"),
                     ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
-                    ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"), #  + emd_id()),
                     ui.input_action_button("select_emdb", "Select a random EMDB ID", value=False),
                     ui.output_ui("conditional_3D_emd"),
                     output_widget("display_micrograph"),
@@ -1076,8 +1068,8 @@ def server(input, output, session):
             warning_map_size = f"Due to the resource limit, the maximal map size should be {max_map_dim}x{max_map_dim}x{max_map_dim} voxels or less to avoid crashing the server process"
     
     
-    @output
-    @render.ui
+    #@output
+    #@render.ui
     @reactive.event (input.input_mode_params, input.select_emdb, input.input_emd)
     def get_link_emd():
         if input.input_mode_params() != "3":
@@ -1133,11 +1125,11 @@ def server(input, output, session):
 
 
 
-        
-        return ui.TagList(
-                ui.markdown(msg_reactive()),
-                ui.markdown(f'[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
-        )
+        return
+        #return ui.TagList(
+        #        ui.markdown(msg_reactive()),
+        #        ui.markdown(f'[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
+        #)
 
     @reactive.effect
     @reactive.event(input.input_mode_params, input.input_emd, twist, rise, csym, emd_url)
@@ -1160,7 +1152,7 @@ def server(input, output, session):
             label = url.split("/")[-1].split(".")[0]
             map_info = compute.MapInfo(
                 #url=url,
-                emd_id = emd_id(),
+                emd_id = input.input_emd(),
                 twist=twist(), 
                 rise=rise(), 
                 csym=csym(), 
