@@ -826,7 +826,7 @@ def server(input, output, session):
     @reactive.event(input.is_3d, input.input_mode_params)
     def add_transpose():
         transpose_auto = input.input_mode_params() not in [2, 3] and nx() > ny()
-        print("is_3d: ", input.is_3d())
+        # print("is_3d: ", input.is_3d())
         # if input.input_mode_params() == "3":
         #     return ui.TagList(
         #         ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
@@ -923,12 +923,12 @@ def server(input, output, session):
     def set_mask_radius_auto(): 
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
         input_type = input.input_type()
-        print("prev_dx_val, curr_dx_val, dx_auto: ", prev_dx_val(), curr_dx_val(), dx_auto())
+        # print("prev_dx_val, curr_dx_val, dx_auto: ", prev_dx_val(), curr_dx_val(), dx_auto())
         if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()):
             radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_transform(), thresh_ratio=0.1)
-            print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
-                radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
-            print("previous dx: ", prev_dx_val())
+            # print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
+            #     radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
+            # print("previous dx: ", prev_dx_val())
             mask_radius_auto.set( mask_radius_auto_v)
             radius_auto.set(radius_auto_v)
             change_image.set(0.0)
@@ -1043,7 +1043,7 @@ def server(input, output, session):
             return ui.TagList(
                     ui.output_ui("get_link_emd"),
                     ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
-                    ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-" + emd_id()),
+                    ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"), #  + emd_id()),
                     ui.input_action_button("select_emdb", "Select a random EMDB ID", value=False),
                     ui.output_ui("conditional_3D_emd"),
                     output_widget("display_micrograph"),
@@ -1075,8 +1075,7 @@ def server(input, output, session):
         if max_map_size>0:
             warning_map_size = f"Due to the resource limit, the maximal map size should be {max_map_dim}x{max_map_dim}x{max_map_dim} voxels or less to avoid crashing the server process"
     
-
-
+    
     @output
     @render.ui
     @reactive.event (input.input_mode_params, input.select_emdb, input.input_emd)
@@ -1123,24 +1122,26 @@ def server(input, output, session):
                     csym.set(params['csym'])
             else:
                 msg +=  "  \n*helical params not available*"
-            
             msg_reactive.set(msg)
+
+
+
+        
         return ui.TagList(
                 ui.markdown(msg_reactive()),
                 ui.markdown(f'[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
         )
 
-
     @reactive.effect
     @reactive.event(input.input_mode_params, input.input_emd, twist, rise, csym, emd_url)
     def get_map_from_url():
         # Check if we're in EMD mode (mode "3")
-        print("begin get_map_from_url")
+        # print("begin get_map_from_url")
         if input.input_mode_params() != "3":
             print("not emd")
             return
             
-        print("running get_map_from_url 1")
+        # print("running get_map_from_url 1")
         # Check if required inputs are available
         if not input.input_emd():
             print("Missing EMD input")
@@ -1177,32 +1178,32 @@ def server(input, output, session):
             apix_val = None
             
             map_xyz_projection_title.set(f"Map Y projections:")
-            print("projection err 1")
+            # print("projection err 1")
             with ui.Progress(min=0, max=len(maps())) as p:
                 p.set(message="Generating x/yz/ projections", detail="This may take a while ...")
-                print("projection err 2")
+                # print("projection err 2")
                 for mi, m in enumerate(maps()):
-                    print("M: : ", m)
+                    # print("M: : ", m)
                     p.set(mi, message=f"{mi+1}/{len(maps())}: x/y/z projecting {m.label}")
-                    print("projection err 3")
+                    # print("projection err 3")
                     try:
                         tmp_images, tmp_image_labels, apix = compute.get_one_map_xyz_projects(map_info=m)
-                        print("projection err 3.5")
+                        # print("projection err 3.5")
                         images += tmp_images
                         image_labels += tmp_image_labels
 
                         if apix_val is None:
                             apix_val = apix
                         
-                        print(f"Generated {len(tmp_images)} projections for map {m.label}")
+                        # print(f"Generated {len(tmp_images)} projections for map {m.label}")
                     except Exception as e:
                         print(f"Error generating projections for map {m.label}:", e)
-                print("projection err 4")
+                # print("projection err 4")
                 if images:
                     map_xyz_projection_labels.set(image_labels)
                     map_xyz_projections.set(images)
-                    print(np.shape(images))
-                    print(f"Set {len(images)} projections in total")
+                    # print(np.shape(images))
+                    # print(f"Set {len(images)} projections in total")
                 
                 selected_images.set(map_xyz_projections())
                 
@@ -1220,7 +1221,7 @@ def server(input, output, session):
                     })
                     # Force recalculation of auto parameters for EMD
                     recalculate_emd_params.set(True)
-                print("projection err 5")
+                # print("projection err 5")
         except Exception as e:
             print("Error in get_map_xyz_projections:", e)
 
