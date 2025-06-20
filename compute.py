@@ -441,16 +441,7 @@ def get_file_size(url):
 
 
 def plot_histogram(
-    data,
-    title,
-    xlabel,
-    ylabel,
-    max_pair_dist=None,
-    bins=50,
-    log_y=True,
-    show_pitch_twist={},
-    multi_crosshair=False,
-    fig=None,
+    data, title, xlabel, ylabel, max_pair_dist=None, bins=50, log_y=True, show_pitch_twist={}, multi_crosshair=False, fig=None,
 ):
     import plotly.graph_objects as go
 
@@ -549,7 +540,7 @@ def extract_emdb_id(url):
     return None
 
 class MapInfo:
-    def __init__(self, data=None, filename=None, url=None, emd_id=None, label="", apix=None, twist=None, rise=None, csym=1):
+    def __init__(self, data=None, filename=None, url=None, emd_id=None, label="", apix=None, twist=None, rise=None, csym=1, local_file_path=None, use_local_file=True):
         non_nones = [p for p in [data, filename, url, emd_id] if p is not None]
         if len(non_nones)>1:
             raise ValueError(f"MapInfo(): only one of these parameters can be set: data, filename, url, emd_id")
@@ -564,6 +555,17 @@ class MapInfo:
         self.twist = twist
         self.rise = rise
         self.csym = csym
+
+        # added parameter + function
+        self.local_file_path = r"C:\\Anika's Folder\\Random\\emd_10499.map" # local_file_path
+
+    def get_file_path(self):
+        # Return local file path if available, otherwise use URL logic
+        if self.local_file_path:
+            return self.local_file_path
+        else:
+            # Your existing URL-based logic here
+            return self.url
 
     def __repr__(self):
         return (f"MapInfo(label={self.label}, emd_id={self.emd_id}, "
@@ -632,38 +634,147 @@ def get_amyloid_n_sub_1_symmetry(twist, rise, max_n=10):
         break
     return ret 
 
-def get_one_map_xyz_projects(map_info): # length_z, map_projection_xyz_choices):
-    label = map_info.label
-    try:
-        data, apix = map_info.get_data()
-    except Exception as e:
-        if map_info.filename:
-            msg = f"Failed to obtain uploaded map {label}"
-        elif map_info.url:
-            msg = f"Failed to download the map from {map_info.url}"
-        elif map_info.emd_id:
-            msg = f"Failed to download the map from EMDB for {map_info.emd_id}"
-        raise ValueError(msg)
+# def get_one_map_xyz_projects(map_info): # length_z, map_projection_xyz_choices):
+#     label = map_info.label
+#     try:
+#         data, apix = map_info.get_data()
+#     except Exception as e:
+#         if map_info.filename:
+#             msg = f"Failed to obtain uploaded map {label}"
+#         elif map_info.url:
+#             msg = f"Failed to download the map from {map_info.url}"
+#         elif map_info.emd_id:
+#             msg = f"Failed to download the map from EMDB for {map_info.emd_id}"
+#         raise ValueError(msg)
     
-    images = []
-    image_labels = []
-    # if 'z' in map_projection_xyz_choices:
-    #     rise = map_info.rise
-    #     if rise>0:
-    #         rise *=  get_amyloid_n_sub_1_symmetry(twist=map_info.twist, rise=map_info.rise)
-    #         images += [helicon.crop_center_z(data, n=max(1, int(0.5 + length_z * rise / apix))).sum(axis=0)]
-    #     else:
-    #         images += [data.sum(axis=0)]
-    #     image_labels += [label + ':Z']
-    images += [data.sum(axis=1)]
-    image_labels += [label + ':Y']
-    # if 'x' in map_projection_xyz_choices:
-    #     images += [data.sum(axis=2)]
-    #     image_labels += [label + ':X']
-    print("data, apix: ", data, apix)
-    print("sum: ", np.sum(data))
+#     images = []
+#     image_labels = []
+#     # if 'z' in map_projection_xyz_choices:
+#     #     rise = map_info.rise
+#     #     if rise>0:
+#     #         rise *=  get_amyloid_n_sub_1_symmetry(twist=map_info.twist, rise=map_info.rise)
+#     #         images += [helicon.crop_center_z(data, n=max(1, int(0.5 + length_z * rise / apix))).sum(axis=0)]
+#     #     else:
+#     #         images += [data.sum(axis=0)]
+#     #     image_labels += [label + ':Z']
+#     images += [data.sum(axis=1)]
+#     image_labels += [label + ':Y']
+#     # if 'x' in map_projection_xyz_choices:
+#     #     images += [data.sum(axis=2)]
+#     #     image_labels += [label + ':X']
+#     print("data, apix: ", data, apix)
+#     print("sum: ", np.sum(data))
         
-    return images, image_labels, apix
+#     return images, image_labels, apix
+
+def get_one_map_xyz_projects(map_info):
+    import numpy as np
+    import os
+    
+    try:
+        # Check if we should use local file
+        #if hasattr(map_info, 'use_local_file') and map_info.use_local_file and map_info.local_file_path:
+        file_path = map_info.local_file_path
+        print(f"Loading local file: {file_path}")
+        
+        # Check if file exists
+        if not os.path.exists(file_path):
+            raise FileNotFoundError(f"Local file not found: {file_path}")
+        
+        # Load the file based on extension
+        if file_path.lower().endswith('.map'):
+            # Handle .map files
+            data, apix = load_map_file(file_path)
+        elif file_path.lower().endswith(('.mrc', '.mrcs')):
+            # Handle .mrc/.mrcs files
+            import mrcfile
+            with mrcfile.open(file_path, mode='r') as mrc:
+                data = mrc.data.copy()
+                apix = float(mrc.voxel_size.x)
+        else:
+            raise ValueError(f"Unsupported file format: {file_path}")
+                
+        # else:
+        #     # Original EMDB download logic (you can keep this as fallback)
+        #     raise ValueError("Local file mode required but not properly configured")
+            
+        # Generate projections
+        print(f"Data shape: {data.shape}")
+        
+        # Create projections along different axes
+        projections = []
+        labels = []
+        
+        # Project along Z-axis (XY plane)
+        proj_xy = np.mean(data, axis=0)
+        projections.append(proj_xy)
+        labels.append(f"{map_info.label}_proj_xy")
+        
+        # Project along Y-axis (XZ plane)  
+        proj_xz = np.mean(data, axis=1)
+        projections.append(proj_xz)
+        labels.append(f"{map_info.label}_proj_xz")
+        
+        # Project along X-axis (YZ plane)
+        proj_yz = np.mean(data, axis=2)
+        projections.append(proj_yz)
+        labels.append(proj_yz)
+        
+        print(f"Generated {len(projections)} projections")
+        return projections, labels, apix
+        
+    except Exception as e:
+        print(f"Error in get_one_map_xyz_projects: {e}")
+        return [], [], None
+
+
+def load_map_file(file_path):
+    '''Load a .map file (CCP4 format)'''
+    import struct
+    import numpy as np
+    
+    try:
+        with open(file_path, 'rb') as f:
+            # Read CCP4 map header (first 1024 bytes)
+            header = f.read(1024)
+            
+            # Parse header (simplified)
+            # Bytes 0-12: NC, NR, NS (grid dimensions)
+            nc, nr, ns = struct.unpack('<3I', header[0:12])
+            
+            # Bytes 40-52: Cell dimensions (Angstroms)
+            cell_a, cell_b, cell_c = struct.unpack('<3f', header[40:52])
+            
+            # Calculate pixel size (assuming cubic voxels)
+            apix = cell_a / nc
+            
+            # Read the data
+            data_size = nc * nr * ns
+            data_bytes = f.read(data_size * 4)  # 4 bytes per float
+            
+            # Convert to numpy array
+            data = np.frombuffer(data_bytes, dtype='<f4')  # little-endian float32
+            data = data.reshape((ns, nr, nc))  # Note: CCP4 uses different axis order
+            
+            print(f"Loaded .map file: {nc}x{nr}x{ns}, apix={apix:.3f}")
+            return data, apix
+            
+    except Exception as e:
+        print(f"Error loading .map file: {e}")
+        # Fallback: try to load as binary float array
+        try:
+            data = np.fromfile(file_path, dtype=np.float32)
+            # You'll need to guess the dimensions - this is a fallback
+            size = int(round(len(data) ** (1/3)))
+            if size ** 3 == len(data):
+                data = data.reshape((size, size, size))
+                apix = 1.0  # Default pixel size
+                print(f"Loaded as binary float array: {size}^3, apix={apix}")
+                return data, apix
+            else:
+                raise ValueError("Cannot determine data dimensions")
+        except:
+            raise ValueError(f"Failed to load file: {file_path}")
 
 
 def symmetrize_project_align_one_map(map_info, image_query, image_query_label, image_query_apix, rescale_apix, length_xy_factor, match_sf, angle_range, scale_range):

@@ -34,14 +34,6 @@ from math import fmod
 from os import getpid
 from urllib.parse import parse_qs
 
-# TODO: delete bokeh graphs and reimplement
-from bokeh.events import MouseMove, MouseEnter, DoubleTap
-from bokeh.io import export_png
-from bokeh.layouts import gridplot, column, layout
-from bokeh.models import Button, ColumnDataSource, CustomJS, Label, LinearColorMapper, Slider, Span, Spinner
-from bokeh.models.tools import CrosshairTool, HoverTool
-from bokeh.plotting import figure
-
 from finufft import nufft2d2
 
 from numba import jit, set_num_threads, prange
@@ -145,7 +137,7 @@ max_rise = reactive.value(0.0)
 
 is_3d_reactive = reactive.value(None)
 data = reactive.value(None)
-data_transform = reactive.value(None)
+data_2d_final = reactive.value(None)
 
 transform_params = reactive.Value(None)
 change_image = reactive.value(0.0)
@@ -172,6 +164,10 @@ map_xyz_projection_title = reactive.value("Map XYZ projections:")
 map_xyz_projection_labels = reactive.value([])
 map_xyz_projection_display_size = reactive.value(128)
 recalculate_emd_params = reactive.Value(False)
+
+
+
+local_emd_file_path = reactive.Value("C:\\Anika's Folder\\Random\\emd_10499.map")
 
 
 user_inputs = reactive.value({
@@ -242,6 +238,7 @@ app_ui = ui.page_fluid(
                     value="input_mode"
                 )
             ),
+            # ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"), #  + emd_id()),
             ui.output_ui("sidebar_text"),
             class_="custom-sidebar",
             width = "20vw"
@@ -858,8 +855,10 @@ def server(input, output, session):
             data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_url(image_url)
             apix_auto.set(apix_auto_v)
         else: # emd
-            # data_all, map_crs_auto, apix_auto = get_emdb_map(emd_id)
             pass
+            # data_all_v, map_crs_auto_v, apix_auto_v = get_emdb_map(emd_id)
+
+            
         
     @reactive.Effect
     @reactive.event(input.input_mode_params, input.upload_classes)
@@ -874,7 +873,7 @@ def server(input, output, session):
     # TODO: make set_apix_auto for emd selection
 
     @reactive.Effect
-    @reactive.event(input.input_type, data_transform)
+    @reactive.event(input.input_type, data_2d_final)
     def set_angle_auto():
         # if input.input_mode_params() == "3":
         #     angle_auto.set(0.0)
@@ -919,13 +918,13 @@ def server(input, output, session):
 
     # FIXING HERRE
     @reactive.Effect
-    @reactive.event(input.input_type, data_transform)
+    @reactive.event(input.input_type, data_2d_final)
     def set_mask_radius_auto(): 
         # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
         input_type = input.input_type()
         # print("prev_dx_val, curr_dx_val, dx_auto: ", prev_dx_val(), curr_dx_val(), dx_auto())
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()):
-            radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_transform(), thresh_ratio=0.1)
+        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_2d_final() is not None and (prev_dx_val() == curr_dx_val()):
+            radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_2d_final(), thresh_ratio=0.1)
             # print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
             #     radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
             # print("previous dx: ", prev_dx_val())
@@ -981,17 +980,13 @@ def server(input, output, session):
 
         # Update the reactive `data` object
         if data_v is not None:
-            data_transform.set(data_v)
+            data_2d_final.set(data_v)
             print("set here")
 
             if input.dx() != 0:
                 change_image.set(1.0)
             # print("Updated data reactive with transformed data_v.")
    
-
-
-
-
     # code added from the Helical Pitch Image Selection:
     @output
     @render.ui
@@ -1037,7 +1032,6 @@ def server(input, output, session):
                 output_widget("transformed_display_micrograph"),
                 output_widget("plot_graph"),
                 output_widget("acf_plot"),
-
             )
         elif selection == "3":  # EMD-xxxxx
             return ui.TagList(
@@ -1076,91 +1070,261 @@ def server(input, output, session):
             warning_map_size = f"Due to the resource limit, the maximal map size should be {max_map_dim}x{max_map_dim}x{max_map_dim} voxels or less to avoid crashing the server process"
     
     
+    # @output
+    # @render.ui
+    # @reactive.event (input.input_mode_params, input.select_emdb, input.input_emd)
+    # def get_link_emd():
+    #     if input.input_mode_params() != "3":
+    #         print("not emd")
+    #         return
+        
+    #     emdb_ids_all, methods, resolutions, _, emdb_ids_helical = get_emdb_ids()
+    #     url = "https://www.ebi.ac.uk/emdb/search/*%20AND%20structure_determination_method:%22helical%22?rows=10&sort=release_date%20desc" # change to local copy
+    #     if emdb_ids_helical is None:
+    #         return
+    #     msg = ""
+
+    #     arr = [51000, 17729, 15499, 50089, 42931]
+    #     selected_id = str(10499) # str(random.choice(arr))
+    #     print("1")
+    #     # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
+
+    #     id = input.input_emd().lower().split("emd-")[-1]
+        
+    #     print("id: ", id)
+    #     if id != selected_id:
+    #         print("in here 1")
+    #         emd_id.set(id)
+    #     elif not key_emd_id() or input.select_emdb():
+    #         print("in here 2")
+    #         selected_id = str(10499) # str(random.choice(arr))
+    #         key_emd_id.set('emd-' + selected_id)
+    #         emd_id.set(key_emd_id().lower().split("emd-")[-1])
+
+    #         print('2')
+    #         msg = f'[EMD-{emd_id()}](https://www.ebi.ac.uk/emdb/entry/EMD-{emd_id()})'
+    #         emd_url.set(msg)
+    #         resolution = resolutions[emdb_ids_all.index(emd_id())]
+    #         msg += f' | resolution={resolution}Å'
+    #         params = get_emdb_helical_parameters(emd_id())
+    #         print(msg)
+    #         print("params")
+    #         print(params)
+
+    #         if params and ("twist" in params and "rise" in params and "csym" in params):           
+    #             msg += f"  \ntwist={params['twist']}° | rise={params['rise']}Å"
+    #             if params.get("csym_known", True): msg += f" | c{params['csym']}"
+    #             else: msg += " | csym n/a"
+    #             if emd_id != prev_emdid():
+    #                 prev_emdid.set(emd_id)
+    #                 rise.set(params['rise'])
+    #                 twist.set(params['twist'])
+    #                 pitch.set(twist2pitch(twist=twist(), rise=rise()))
+    #                 csym.set(params['csym'])
+    #         else:
+    #             msg +=  "  \n*helical params not available*"
+    #         msg_reactive.set(msg)
+
+
+
+        
+    #     return ui.TagList(
+    #            ui.markdown(msg_reactive()),
+    #            ui.markdown(f'[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
+    #     )
+
     @output
     @render.ui
-    @reactive.event (input.input_mode_params, input.select_emdb, input.input_emd)
+    @reactive.event(input.input_mode_params, input.select_emdb, input.input_emd, local_emd_file_path)
     def get_link_emd():
         if input.input_mode_params() != "3":
-            print("not emd")
+            print("not emd mode") 
             return
         
-        emdb_ids_all, methods, resolutions, _, emdb_ids_helical = get_emdb_ids()
-        url = "https://www.ebi.ac.uk/emdb/search/*%20AND%20structure_determination_method:%22helical%22?rows=10&sort=release_date%20desc"
-        if emdb_ids_helical is None:
-            return
         msg = ""
-
-        arr = [51000, 17729, 15499, 50089, 42931]
-        selected_id = str(10499) # str(random.choice(arr))
-        print("1")
-        # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
-
-        id = input.input_emd().lower().split("emd-")[-1]
         
-        print("id: ", id)
-        if id != selected_id:
-            print("in here 1")
+        try:
+            # Get EMDB data (for UI display only)
+            emdb_ids_all, methods, resolutions, _, emdb_ids_helical = get_emdb_ids()
+        except:
+            print("WARNING: Could not get EMDB data, using defaults")
+            emdb_ids_all = []
+            resolutions = []
+        
+        # Set default values for local file testing
+        selected_id = "10499"
+        id = input.input_emd().lower().split("emd-")[-1] if input.input_emd() else selected_id
+        
+        # Update emd_id if changed
+        if id != emd_id():
             emd_id.set(id)
-        elif not key_emd_id() or input.select_emdb():
-            print("in here 2")
-            selected_id = str(10499) # str(random.choice(arr))
-            key_emd_id.set('emd-' + selected_id)
-            emd_id.set(key_emd_id().lower().split("emd-")[-1])
-
-            print('2')
-            msg = f'[EMD-{emd_id()}](https://www.ebi.ac.uk/emdb/entry/EMD-{emd_id()})'
-            emd_url.set(msg)
-            resolution = resolutions[emdb_ids_all.index(emd_id())]
+        
+        # Always update the display message
+        print("Using local file path:", local_emd_file_path())
+        current_file = local_emd_file_path()
+        file_status = "✓ File exists" if os.path.exists(current_file) else "✗ File not found"
+        
+        msg = f'**LOCAL FILE MODE** - EMD-{emd_id()}'
+        msg += f' | Using local file: `{current_file}`'
+        msg += f' | Status: {file_status}'
+        
+        # Set default helical parameters if this is a new EMD ID
+        if emd_id() != prev_emdid():
+            prev_emdid.set(emd_id())
+            
+            default_params = {
+                'twist': 1.0,  # degrees
+                'rise': 4.75,  # Angstroms
+                'csym': 1
+            }
+            
+            rise.set(default_params['rise'])
+            twist.set(default_params['twist'])
+            pitch.set(twist2pitch(twist=twist(), rise=rise()))
+            csym.set(default_params['csym'])
+            
+            resolution = 3.0  # Default resolution
             msg += f' | resolution={resolution}Å'
-            params = get_emdb_helical_parameters(emd_id())
-            print(msg)
-            print("params")
-            print(params)
-
-            if params and ("twist" in params and "rise" in params and "csym" in params):           
-                msg += f"  \ntwist={params['twist']}° | rise={params['rise']}Å"
-                if params.get("csym_known", True): msg += f" | c{params['csym']}"
-                else: msg += " | csym n/a"
-                if emd_id != prev_emdid():
-                    prev_emdid.set(emd_id)
-                    rise.set(params['rise'])
-                    twist.set(params['twist'])
-                    pitch.set(twist2pitch(twist=twist(), rise=rise()))
-                    csym.set(params['csym'])
-            else:
-                msg +=  "  \n*helical params not available*"
-            msg_reactive.set(msg)
-
-
-
+            msg += f" | twist={default_params['twist']}° | rise={default_params['rise']}Å | c{default_params['csym']}"
+        
+        msg_reactive.set(msg)
         
         return ui.TagList(
-                ui.markdown(msg_reactive()),
-                ui.markdown(f'[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
+            ui.markdown(msg_reactive() if msg_reactive() else "Loading..."),
+            # ui.input_text(
+            #     "local_file_path", 
+            #     "Local file path:", 
+            #     value=local_emd_file_path(),
+            #     placeholder="Enter full path to .map or .mrc file"
+            # ),
+            # ui.input_action_button("update_local_path", "Update File Path"),
+            # ui.input_action_button("test_local_file", "Test File Loading"),
+            ui.output_ui("file_test_result")
         )
+    
+    @output
+    @render.ui
+    @reactive.event(input.test_local_file)
+    def file_test_result():
+        if not input.test_local_file():
+            return ui.div()
+        
+        try:
+            file_path = local_emd_file_path()
+            if not file_path:
+                return ui.div("No file path specified", style="color: red;")
+            
+            if not os.path.exists(file_path):
+                return ui.div(f"File not found: {file_path}", style="color: red;")
+            
+            # Test loading the file
+            success, map_info = compute.test_local_file_loading(file_path, emd_id())
+            
+            if success:
+                return ui.div("✓ File loaded successfully!", style="color: green;")
+            else:
+                return ui.div("✗ Failed to load file", style="color: red;")
+                
+        except Exception as e:
+            return ui.div(f"Error testing file: {e}", style="color: red;")
+
+
+    @reactive.Effect
+    @reactive.event(input.update_local_path)
+    def update_local_file_path():
+        if input.local_file_path():
+            new_path = input.local_file_path().strip()
+            if new_path != local_emd_file_path():
+                local_emd_file_path.set(new_path)
+                print(f"Updated local file path to: {new_path}")
+                
+                # Clear existing maps to force reload
+                maps.set([])
+                selected_images.set([])
+
+
+    @reactive.effect
+    @reactive.event(input.input_mode_params, input.input_emd, twist, rise, csym, local_emd_file_path)
+    def get_map_from_local_file():
+        if input.input_mode_params() != "3":
+            print("not emd mode")
+            return
+        
+        if not input.input_emd():
+            print("Missing EMD input")
+            return
+        
+        try:
+            local_file = local_emd_file_path()
+            if not local_file or not os.path.exists(local_file):
+                print(f"Invalid local file path: {local_file}")
+                return
+            
+            label = f"local_emd_{emd_id()}"
+            print(f"Creating MapInfo with local file: {local_file}")
+        
+            # Create MapInfo object with local file path
+            map_info = compute.MapInfo(
+                local_file_path=local_file,
+                emd_id=emd_id(),
+                twist=twist(), 
+                rise=rise(), 
+                csym=csym(), 
+                label=label,
+                use_local_file=True  # Important: set this flag
+            )
+            
+            # Test that the file can be loaded
+            try:
+                test_data, test_apix = map_info.get_data()
+                print(f"Successfully validated local file: shape={test_data.shape}, apix={test_apix}")
+            except Exception as test_error:
+                print(f"Failed to load local file: {test_error}")
+                return
+            
+            maps.set([map_info])
+            print(f"Maps set successfully with local file: {local_file}")
+            
+        except Exception as e:
+            print(f"Error in get_map_from_local_file: {e}")
+            import traceback
+            traceback.print_exc()
+
+    # when data_all updated, if is_3d
+    # def determine_data_all():
+    #     if is_3d_reactive():
+    #         # optional helical apply symmetry (input is data_all)
+    #         # get map projection
+    #         # optional 2d image transform
+    #         # get data to data_2d_final
+    #     else:
+    #         # show image selector
+    #         # show original image (same as getmapsprojection as in 3d branch)
+    #         # optional 2d image transform
+            #   get data to data_2d_final
+        
+
+
 
     @reactive.effect
     @reactive.event(input.input_mode_params, input.input_emd, twist, rise, csym, emd_url)
     def get_map_from_url():
         # Check if we're in EMD mode (mode "3")
-        # print("begin get_map_from_url")
         if input.input_mode_params() != "3":
             print("not emd")
             return
             
-        # print("running get_map_from_url 1")
         # Check if required inputs are available
         if not input.input_emd():
             print("Missing EMD input")
             return
             
         try:
-            #url = input.input_emd()
-            url = emd_id() # emd_url()
+            url = emd_id() # input.input_emd().lower() #emd_id() # emd_url()
             label = url.split("/")[-1].split(".")[0]
             map_info = compute.MapInfo(
                 #url=url,
-                emd_id = emd_id(),
+                emd_id = emd_id(), # input.input_emd(),
                 twist=twist(), 
                 rise=rise(), 
                 csym=csym(), 
@@ -1171,6 +1335,71 @@ def server(input, output, session):
         except Exception as e:
             print("Error in get_map_from_url:", e)
 
+    # @reactive.effect
+    # @reactive.event(maps)
+    # def get_map_xyz_projections():
+    #     try:
+    #         if not maps() or len(maps()) == 0:
+    #             print("Maps is empty, cannot generate projections")
+    #             return
+                
+    #         map_xyz_projections.set([])
+    #         images = []
+    #         image_labels = []
+    #         apix_val = None
+            
+    #         map_xyz_projection_title.set(f"Map Y projections:")
+    #         # print("projection err 1")
+    #         with ui.Progress(min=0, max=len(maps())) as p:
+    #             p.set(message="Generating x/yz/ projections", detail="This may take a while ...")
+    #             # print("projection err 2")
+    #             for mi, m in enumerate(maps()):
+    #                 # print("M: : ", m)
+    #                 p.set(mi, message=f"{mi+1}/{len(maps())}: x/y/z projecting {m.label}")
+    #                 # print("projection err 3")
+    #                 try:
+    #                     print("projection err 1")
+    #                     tmp_images, tmp_image_labels, apix = compute.get_one_map_xyz_projects(map_info=m)
+    #                     print("projection err 2")
+    #                     images += tmp_images
+    #                     print("projection err 3")
+    #                     image_labels += tmp_image_labels
+    #                     print("projection err 4")
+
+    #                     if apix_val is None:
+    #                         apix_val = apix
+    #                     print("projection err 5")
+    #                     # print(f"Generated {len(tmp_images)} projections for map {m.label}")
+    #                 except Exception as e:
+    #                     print(f"Error generating projections for map {m.label}:", e)
+    #             # print("projection err 4")
+    #             if images:
+    #                 map_xyz_projection_labels.set(image_labels)
+    #                 map_xyz_projections.set(images)
+    #                 # print(np.shape(images))
+    #                 # print(f"Set {len(images)} projections in total")
+                
+    #             selected_images.set(map_xyz_projections())
+                
+    #             # Add this part to set apix value for EMD files
+    #             if apix_val is not None:
+    #                 apix_reactive.set(apix_val)
+    #                 apix_auto.set(apix_val)
+    #                 # Reset user inputs to force using auto values
+    #                 user_inputs.set({
+    #                     'apix': None,
+    #                     'angle': None,
+    #                     'dx': None,
+    #                     'dy': None,
+    #                     'mask_radius': None
+    #                 })
+    #                 # Force recalculation of auto parameters for EMD
+    #                 recalculate_emd_params.set(True)
+    #             # print("projection err 5")
+    #     except Exception as e:
+    #         print("Error in get_map_xyz_projections:", e)
+
+
     @reactive.effect
     @reactive.event(maps)
     def get_map_xyz_projections():
@@ -1178,47 +1407,53 @@ def server(input, output, session):
             if not maps() or len(maps()) == 0:
                 print("Maps is empty, cannot generate projections")
                 return
-                
+            
             map_xyz_projections.set([])
             images = []
             image_labels = []
             apix_val = None
+        
+            map_xyz_projection_title.set(f"Map projections:")
             
-            map_xyz_projection_title.set(f"Map Y projections:")
-            # print("projection err 1")
             with ui.Progress(min=0, max=len(maps())) as p:
-                p.set(message="Generating x/yz/ projections", detail="This may take a while ...")
-                # print("projection err 2")
+                p.set(message="Generating x/y/z projections", detail="This may take a while...")
+                
                 for mi, m in enumerate(maps()):
-                    # print("M: : ", m)
-                    p.set(mi, message=f"{mi+1}/{len(maps())}: x/y/z projecting {m.label}")
-                    # print("projection err 3")
+                    p.set(mi, message=f"{mi+1}/{len(maps())}: projecting {m.label}")
+                    
                     try:
+                        print(f"Processing map: {m}")
                         tmp_images, tmp_image_labels, apix = compute.get_one_map_xyz_projects(map_info=m)
-                        # print("projection err 3.5")
-                        images += tmp_images
-                        image_labels += tmp_image_labels
-
-                        if apix_val is None:
-                            apix_val = apix
                         
-                        # print(f"Generated {len(tmp_images)} projections for map {m.label}")
+                        if tmp_images:  # Only add if we got valid images
+                            images.extend(tmp_images)
+                            image_labels.extend(tmp_image_labels)
+                            
+                            if apix_val is None:
+                                apix_val = apix
+                                
+                            print(f"Successfully generated {len(tmp_images)} projections for {m.label}")
+                        else:
+                            print(f"No projections generated for {m.label}")
+                            
                     except Exception as e:
-                        print(f"Error generating projections for map {m.label}:", e)
-                # print("projection err 4")
-                if images:
-                    map_xyz_projection_labels.set(image_labels)
-                    map_xyz_projections.set(images)
-                    # print(np.shape(images))
-                    # print(f"Set {len(images)} projections in total")
+                        print(f"Error generating projections for map {m.label}: {e}")
+                        import traceback
+                        traceback.print_exc()
+            
+            if images:
+                map_xyz_projection_labels.set(image_labels)
+                map_xyz_projections.set(images)
+                selected_images.set(images)  # Auto-select the first projection
                 
-                selected_images.set(map_xyz_projections())
-                
-                # Add this part to set apix value for EMD files
+                print(f"Set {len(images)} projections total")
+            
+                # Set apix values
                 if apix_val is not None:
                     apix_reactive.set(apix_val)
                     apix_auto.set(apix_val)
-                    # Reset user inputs to force using auto values
+                    
+                    # Reset user inputs to use auto values
                     user_inputs.set({
                         'apix': None,
                         'angle': None,
@@ -1226,20 +1461,28 @@ def server(input, output, session):
                         'dy': None,
                         'mask_radius': None
                     })
-                    # Force recalculation of auto parameters for EMD
+                    
                     recalculate_emd_params.set(True)
-                # print("projection err 5")
+                    print(f"Set apix to {apix_val}")
+            else:
+                print("No valid projections generated")
+                
         except Exception as e:
-            print("Error in get_map_xyz_projections:", e)
+            print(f"Error in get_map_xyz_projections: {e}")
+            import traceback
+            traceback.print_exc()
 
 
-
-
+    # Helical Symmetry Implementation
     @output
     @render.ui
     @reactive.event(input.apply_helical_sym)
     def helical_sym_output():
         value = input.apply_helical_sym()
+        nx_local, ny_local, nz_local = data().shape # data_2d_final().shape
+        nx.set(nx_local)
+        ny.set(ny_local)
+        nz.set(nz_local)
         # print("here")
         if value:
             # print("in val")
@@ -1252,6 +1495,65 @@ def server(input, output, session):
                     ui.output_ui("update_apix_map_vals"),
                     ui.hr(),
             )
+
+    # @reactive.event(input.apply_helical_sym, input.rise_ahs)
+    # def helical_sym_output():
+    #     if input.apply_helical_sym() and input.rise_ahs():
+    #         nz_ahs = round(length_ahs/apix_ahs)//2*2
+    #         nyx_ahs = round(width_ahs/apix_ahs)//2*2
+    #         data_all = apply_helical_symmetry(data_all, apix_map, twist_ahs, rise_ahs, csym_ahs, fraction_ahs, new_size=(nz_ahs, nyx_ahs, nyx_ahs), new_apix=apix_ahs)
+    #         apix_auto = apix_ahs
+    #         file_name = "helical_symmetrized.mrc.gz"
+    #         with mrcfile.new(file_name, compression="gzip", overwrite=True) as mrc:
+    #             mrc.set_data(data_all.astype(np.float32))
+    #             mrc.voxel_size = apix_ahs
+    #         with open(file_name, 'rb') as fp:
+    #             st.download_button('Download symmetrized map', fp, file_name=file_name)
+
+
+
+    helical_data = reactive.Value(None)
+    file_name = "helical_symmetrized.mrc.gz"
+
+    @reactive.event(input.apply_helical_sym, input.rise_ahs)
+    def helical_sym_output():
+        if input.apply_helical_sym() and input.rise_ahs():
+            nz_ahs = round(input.length_ahs() / input.apix_ahs()) // 2 * 2
+            nyx_ahs = round(input.width_ahs() / input.apix_ahs()) // 2 * 2
+
+            result_data = apply_helical_symmetry(
+                data_all, input.apix_map(), input.twist_ahs(), input.rise_ahs(),
+                input.csym_ahs(), input.fraction_ahs(),
+                new_size=(nz_ahs, nyx_ahs, nyx_ahs),
+                new_apix=input.apix_ahs()
+            )
+
+            # Update reactive value for later access in download
+            helical_data.set(result_data.astype(np.float32))
+
+    # UI download button
+    ui.download_button("download_sym", "Download symmetrized map")
+
+    # Define what happens when download is triggered
+    @session.download(filename=file_name)
+    def download_sym():
+        data = helical_data.get()
+        if data is None:
+            yield b""
+            return
+        import tempfile
+        with tempfile.NamedTemporaryFile(delete=False, suffix=".mrc.gz") as temp:
+            with mrcfile.new(temp.name, compression="gzip", overwrite=True) as mrc:
+                mrc.set_data(data)
+                mrc.voxel_size = input.apix_ahs()
+            temp.seek(0)
+            with open(temp.name, "rb") as f:
+                yield from f
+
+
+
+
+
 
     @output
     @render.ui
@@ -1432,13 +1734,6 @@ def server(input, output, session):
         nx.set(h)
         ny.set(w)
 
-        # images = (selected_images()[0] - min(selected_images()[0])) / (max(selected_images()[0]) - min(selected_images()[0])) * 255
-        # fig = image_trace.plot_micrograph(
-        #     micrograph= np.array(images, dtype=np.uint8)# 255 - selected_images()[0],
-        #     title=f"Original image ({nx()}x{ny()})",
-        #     apix=apix_reactive(),
-        # )
-
         img = selected_images()[0]
 
         # Normalize image to [0, 255]
@@ -1478,14 +1773,14 @@ def server(input, output, session):
     
 
     @render_plotly
-    @reactive.event(data_transform, input.negate, apix_reactive)
+    @reactive.event(data_2d_final, input.negate, apix_reactive)
     def transformed_display_micrograph():
-        images = data_transform() # selected_images()
-        if data_transform() is None:
+        images = data_2d_final() # selected_images()
+        if data_2d_final() is None:
             return None # px.scatter(title="No image selected")
 
         # h, w = selected_images()[0].shape[:2]
-        h, w = data_transform().shape[:2]
+        h, w = data_2d_final().shape[:2]
         nx.set(h)
         ny.set(w)
 
@@ -1493,7 +1788,7 @@ def server(input, output, session):
         #     selected_images()[0] if input.negate() else 255 - selected_images()[0]
         # )
 
-        img = data_transform()
+        img = data_2d_final()
         img_min = np.min(img)
         img_max = np.max(img)
         normalized_img = (img - img_min) / (img_max - img_min) * 255
@@ -1990,10 +2285,6 @@ def rotate_shift_image(data, angle=0, pre_shift=(0, 0), post_shift=(0, 0), rotat
     return ret
 
 def generate_projection(data, az=0, tilt=0, noise=0, output_size=None):
-    #from scipy.spatial.transform import Rotation as R
-    #from scipy.ndimage import affine_transform
-    # note the convention change
-    # xyz in scipy is zyx in cryoEM maps
     if az or tilt:
         rot = R.from_euler('zx', [tilt, az], degrees=True)  # order: right to left
         m = rot.as_matrix()
@@ -2476,7 +2767,6 @@ def read_mrc_data(mrc):
     data=mrc_data.data
     return data, nx, ny
 
-#@st.cache_data(persist='disk', show_spinner=False)
 def gen_filament_template(length, diameter, angle=0, center_offset=(0, 0), image_size=(1024, 1024), apix=1.0, order=5):
     ny, nx = image_size
     y = (np.arange(0, ny) - ny//2)*apix
@@ -2495,7 +2785,7 @@ def gen_filament_template(length, diameter, angle=0, center_offset=(0, 0), image
         d = transform.warp(d, xform.inverse)
     return d
 
-#@st.cache_data(persist='disk', show_spinner=False)
+
 def pad_to_size(array, ny, nx):
     h, w = array.shape
     a = (ny - h) // 2
@@ -2504,7 +2794,7 @@ def pad_to_size(array, ny, nx):
     bb = nx - b - w
     return np.pad(array, pad_width=((a, aa), (b, bb)), mode='constant')
 
-#@st.cache_data(persist='disk', show_spinner=False)
+
 def filament_transform_fft(image, filament_template, angle_step):
     #import scipy.fft
     #import skimage.transform
@@ -2531,7 +2821,7 @@ def filament_transform_fft(image, filament_template, angle_step):
     ret_ang[ret_ang<0] += 360
     return (ret_amp2f, ret_ang)
 
-#@st.cache_data(persist='disk', show_spinner=False)
+
 def sample_axis_dots(data, apix, nx, ny, r_filament_pixel, l_template_pixel, da, num_samples, lp_x, lp_y):
     # fill in potential black backgrounds with helical boxer
     #data_slice_median=np.median(data)
@@ -2642,7 +2932,7 @@ def create_fit_spline_figure(data,xs,ys,new_xs,apix):
     
     return fig
 
-#@st.cache_data(persist='disk', show_spinner=False)
+
 def fit_spline(_disp_col,data,xs,ys,apix,display=False):
     # fit spline
     ny,nx=data.shape
@@ -2739,22 +3029,4 @@ def filament_straighten(_disp_col,data,tck,new_xs,ys,r_filament_pixel_display,ap
     #    st.bokeh_chart(fig, use_container_width=True)
 
     return new_im
-
-
-
-
-
-#Helical Projection Helper Functions
-
-
-
-
-
-
-
-
-
-
-
-
 
