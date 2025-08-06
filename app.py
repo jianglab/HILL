@@ -620,7 +620,6 @@ def server(input, output, session):
         
         
 
-
     @reactive.Calc
     def get_dx():
         """Get the current dx value based on user input or auto calculation"""
@@ -1771,7 +1770,6 @@ def server(input, output, session):
 
         return fig
     
-
     @render_plotly
     @reactive.event(data_2d_final, input.negate, apix_reactive)
     def transformed_display_micrograph():
