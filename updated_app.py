@@ -617,7 +617,7 @@ def server(input, output, session):
     @reactive.event(data_all, apix_reactive)
     def display_micrograph():
         images = data_all()
-        if not images:  # Check for None or empty list
+        if images is None:  # Check for None or empty list
             return None # px.scatter(title="No image selected")
 
         h, w = data_all()[0].shape[:2]
@@ -723,7 +723,7 @@ def server(input, output, session):
     @reactive.event(data_all, mask_radius_auto, apix_reactive)
     def plot_graph():
         images = data_all()
-        if not images:
+        if images is None:
             #print("No selected images!")
             return None # px.scatter(title="No image selected")
         
@@ -773,7 +773,7 @@ def server(input, output, session):
     @reactive.Calc
     def acf_data():
         images = data_all()
-        if not images:
+        if images is None:
             return None, None, None
 
         data = images[0]
@@ -794,7 +794,7 @@ def server(input, output, session):
     @reactive.event(data_all, apix_reactive)
     def acf_plot():
         images = data_all()
-        if not images:
+        if images is None:
             return
         xmax, y, acf = acf_data()
 
@@ -869,7 +869,7 @@ def server(input, output, session):
                 enable_selection=True,
                 allow_multiple_selection=False,
             )
-        return ui.div("No images available")
+        return ui.div("No images available 1")
     
     @output
     @render.ui
@@ -885,7 +885,7 @@ def server(input, output, session):
                 enable_selection=True,
                 allow_multiple_selection=False,
             )
-        return ui.div("No images available")
+        return ui.div("No images available 2")
 
     @reactive.effect
     @reactive.event(data_all) # , input.ignore_blank)
@@ -916,16 +916,88 @@ def server(input, output, session):
             selected_image_labels.set([])
     
 
+    @reactive.effect
+    @reactive.event(input.select_classes)
+    def update_selected_images():
+        if input.select_classes() is not None:
+            selected = [displayed_class_images()[i] for i in input.select_classes()]
+            selected_images.set(
+                [displayed_class_images()[i] for i in input.select_classes()]
+            )
+            selected_image_labels.set(
+                [displayed_class_labels()[i] for i in input.select_classes()]
+            )
+            
+
+
+    @output
+    @render.ui
+    def display_selected_images():
+        imgs = selected_images()
+        labels = selected_image_labels()
+        if len(imgs) > 0 and len(labels) > 0:
+            return shiny_test.image_gallery(
+                id="display_selected_image",
+                label="Selected classe(s):",
+                images=imgs,
+                image_labels=labels,
+                enable_selection=False,
+                allow_multiple_selection=False,
+            )
+        return ui.div("No images selected")
 
 
     @reactive.Effect
-    @reactive.event(input.input_mode_params, input.url_params, input.is_3d)
+    @reactive.event(input.run, input.input_mode_params, input.url_params)
+    def get_class2d():
+        if input.input_mode_params() == "1":
+            fileinfo = input.upload_classes()
+            if fileinfo is not None:
+                class_file = fileinfo[0]["datapath"]
+                try:
+                    data, apix = compute.get_class2d_from_file(class_file)
+                    image_size.set(nx)
+                    data_all.set(data)
+                    image_size.set(nx)
+                except Exception as e:
+                    print(e)
+                    modal = ui.modal(
+                        f"Failed to read the uploaded 2D class average images from {fileinfo[0]['name']}",
+                        title="File upload error",
+                        easy_close=True,
+                        footer=None
+                    )
+                    ui.modal_show(modal)
+        
+        elif input.input_mode_params() == "2" and input.url_params():
+            url = input.url_params()
+            try:
+                data, apix = compute.get_class2d_from_url(url)
+                image_size.set(nx())
+                data_all.set(data)
+                image_size.set(nx())
+            except Exception as e:
+                print(e)
+                modal = ui.modal(
+                    f"Failed to download 2D class average images from {url}",
+                    title="URL download error",
+                    easy_close=True,
+                    footer=None
+                )
+                ui.modal_show(modal)
+
+   
+
+
+    @reactive.Effect
+    @reactive.event(input.input_mode_params, input.url_params, input.is_3d, input.run)
     def determine_data_all():
         mode = input.input_mode_params()
         data_all.set(None)
 
         if mode == "1" and data_all():
             fileobj = input.upload_classes()
+            # TODO: figure out which data_all to be using??
             data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_uploaded_file(input.upload_classes()[0])
             apix_auto.set(apix_auto_v)
         elif mode == "2" and data_all(): # url
