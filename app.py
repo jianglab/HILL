@@ -1,70 +1,27 @@
 import numpy as np
 import pandas as pd
-import plotly.express as px
-from shiny import App, Inputs, Outputs, Session, render, ui
-from shiny.ui import div, HTML
 
-import plotly.express as px
 from shinywidgets import render_plotly
 
-from shiny import App, Inputs, Outputs, Session, reactive, render, ui
-from shiny.types import ImgData
-from shiny import session
+from shiny import App, reactive, render, ui
 
-from shinywidgets import output_widget, render_widget, render_plotly
+from shinywidgets import output_widget, render_plotly
 import pandas as pd
 from shiny import reactive, req
 import compute
-import image_trace
-import shiny_test
+import util
 import plotly.graph_objects as go
-
-# may be unnecessary
-from skimage.transform import radon # resize_local_mean
-import mrcfile
-from shiny.types import FileInfo
-import pathlib
-import matplotlib.pyplot as plt
-
-# from streamlit imports
-import argparse, base64, gc, io, os, pathlib, random, socket, stat, tempfile, urllib, warnings
-from getpass import getuser
-from itertools import product
-from math import fmod
-from os import getpid
-from urllib.parse import parse_qs
 
 from finufft import nufft2d2
 
-from numba import jit, set_num_threads, prange
+from numba import set_num_threads, prange
 
 import pandas as pd
-from PIL import Image
-from psutil import virtual_memory, Process
 
-import qrcode
-
-import scipy.fft
-import scipy.fftpack as fp
 from scipy.spatial.transform import Rotation as R
-from scipy.ndimage import affine_transform, map_coordinates
-from scipy.signal import correlate
-from scipy.interpolate import splrep, splev
-from scipy.interpolate import RegularGridInterpolator
-from scipy.special import jnp_zeros
-from scipy.optimize import minimize, fmin
+from scipy.ndimage import map_coordinates
 
-from skimage.io import imread
-from skimage import transform
-
-
-
-# TODO: add helicon shiny here (install -r)
-
-def compute_layer_line_positions(twist, rise, csym, radius, tilt, cutoff_res, m_max):
-    # TODO Complete this function
-    return {i: f"Group {i}" for i in range(m_max + 1)}
-
+import helicon
 
 def import_with_auto_install(packages, scope=locals()):
     import importlib, site, subprocess, sys
@@ -83,9 +40,9 @@ def import_with_auto_install(packages, scope=locals()):
             scope[package_import_name] = importlib.import_module(package_import_name)
 
 #ny, nx = 200, 200 # Get the dimensions of the loaded image
-nx = reactive.value(0)  # default value
-ny = reactive.value(0)  # default value
-nz = reactive.value(1)    # default value
+nx = reactive.value(256)  # default value
+ny = reactive.value(256)  # default value
+nz = reactive.value(256)    # default value
 MAX_SIZE = 500 # temp value
 
 
@@ -97,14 +54,14 @@ urls = {
 url_key = "empiar-10940_job010"
 
 # may not be needed
-data_all = reactive.value(None)
-apix_reactive = reactive.value(2)
-image_size = reactive.value(0)
-displayed_class_images = reactive.value([])
-displayed_class_labels = reactive.value([])
+input_data = reactive.value(None)
+apix_from_file = reactive.value(1.0)
+data_all_2d = reactive.value([])
+data_all_2d_labels = reactive.value([])
 initial_selected_image_indices = reactive.value([])
 selected_images = reactive.value([])
 selected_image_labels = reactive.value([])
+image_display_size = reactive.value(128)
 
 first_point = reactive.Value(None)
 second_point = reactive.Value(None)
@@ -117,6 +74,7 @@ dy_auto = reactive.value(0.0)
 mask_radius_auto = reactive.value(0.0)
 mask_len_percent_auto = reactive.value(0.0)
 radius_auto = reactive.value(0.0)
+auto_transformation_estimated = reactive.value(False)
 
 apix_value = reactive.value(0.0)
 angle_value = reactive.value(0.0)
@@ -125,19 +83,19 @@ dy_value = reactive.value(0.0)
 mask_radius_value = reactive.value(0.0)
 mask_len_value = reactive.value(0.0)
 
-value = reactive.value(200)
 helical_radius = reactive.value(1)
 m_max_auto_reactive = reactive.value(3)
-twist = reactive.value(0.0)
+twist = reactive.value(29.40)
 min_pitch = reactive.value(0.0)
-pitch = reactive.value(0.0)
-rise = reactive.value(0.0)
-min_rise = reactive.value(0.0)
-max_rise = reactive.value(0.0)
+pitch = reactive.value(268.41)
+rise = reactive.value(21.92)
+min_rise = reactive.value(2.0)
+max_rise = reactive.value(268.41)
 
 is_3d_reactive = reactive.value(None)
 data = reactive.value(None)
-data_transform = reactive.value(None)
+data_2d_transformed = reactive.value(None)
+data_2d_transformed_masked = reactive.value(None)
 
 transform_params = reactive.Value(None)
 change_image = reactive.value(0.0)
@@ -146,7 +104,6 @@ curr_dx_val = reactive.Value(1.0)
 
 key_emd_id = reactive.Value(None)
 emd_id = reactive.value("")
-prev_emdid = reactive.Value(None)
 csym = reactive.Value(None)
 max_map_size = reactive.Value(None)
 max_map_dim = reactive.Value(None)
@@ -165,6 +122,8 @@ map_xyz_projection_labels = reactive.value([])
 map_xyz_projection_display_size = reactive.value(128)
 recalculate_emd_params = reactive.Value(False)
 
+ps_data = reactive.value(None)
+pd_data = reactive.value(None)
 
 user_inputs = reactive.value({
     'apix': None,
@@ -175,12 +134,17 @@ user_inputs = reactive.value({
 })
 
 
-
-# my code
 app_ui = ui.page_fluid(
-    ui.tags.style("""
-        
+    ui.tags.style("""       
+        .scrollable-sidebar {
+            max-height: 100vh; /* Adjust height as needed */
+            overflow-y: auto; /* Enables vertical scrolling */
+            border: 1px solid #ccc; /* Optional: for visual clarity */
+            padding: 10px;
+        }
         .scrollable-container {
+            max-height: 100vh; 
+            overflow-y: auto;  
             display: flex;
             flex-direction: row;
             overflow-x: auto;
@@ -198,9 +162,7 @@ app_ui = ui.page_fluid(
             word-wrap: break-word;  /* Allow text to wrap within the column */
             overflow-wrap: break-word; /* For better compatibility */
             white-space: normal;  /* Ensure normal white space handling */
-        }        
-        
-        
+        }
     """),
     ui.layout_sidebar(
         ui.sidebar(
@@ -230,174 +192,207 @@ app_ui = ui.page_fluid(
                         "input_mode_params",
                         "How to obtain the input image/map:",
                         {"1": "upload", "2": "url", "3": "emd-xxxxx"},
+                        selected="2",
                     ),
                     value="input_mode"
                 )
             ),
-            ui.input_text("input_emd", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"), #  + emd_id()),
-            ui.output_ui("sidebar_text"),
-            class_="custom-sidebar",
-            width = "20vw"
-        ),
-        ui.row(
-            ui.column(12,
-                ui.div(
-                    ui.h2("HILL: Helical Indexing using Layer Lines"),
-                    style="text-align: center; margin-bottom: 20px;"
+            ui.output_ui("conditional_input_uis"),
+            ui.output_ui("conditional_3d_transformation_uis"),
+            #ui.input_action_button("run", label="Run"),
+            ui.output_ui("input_display_uis"),
+            output_widget("display_selected_image"),
+            ui.accordion(
+                ui.accordion_panel(
+                    ui.p("Image Parameters"),
+                    ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
+                    ui.output_ui("img_2d_transformation_uis"),
+                    value="image_parameters_emd"
                 )
-            )
+            ),
+            output_widget("display_transformed_data"),
+            output_widget("plot_radial_profile"),
+            output_widget("acf_plot"),
+            #class_="custom-sidebar",
+            class_="scrollable-sidebar",
+            width = "20vw"            
         ),
         ui.div(
-            ui.div(
-                ui.column(2,
+            ui.row(
+                ui.column(12,
                     ui.div(
-                        ui.output_ui("col_one"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 100%;",
+                        ui.h2("HILL: Helical Indexing using Layer Lines"),
+                        style="text-align: center; margin-bottom: 20px;"
+                    )
+                )
+            ),
+            ui.div(
+                ui.layout_columns(
+                    ui.div(
+                        ui.input_numeric('csym', 'csym', value=6, min=1, step=1, update_on="blur"),
+                        ui.input_numeric('filament_diameter', 'Filament/tube diameter (Å)', value=100*2, min=1.0, max=1000.0, step=10, update_on="blur"),
+                        ui.input_numeric("out_of_plane_tilt", "Out-of-plane tilt (°)", value=0.0, min=-90.0, max=90.0, step=1.0, update_on="blur"),
+                        ui.input_numeric('res_limit_x', 'Resolution limit - X (Å)', value=round(3*1.0,4), min=2*1.0, step=1.0, update_on="blur"),
+                        ui.input_numeric("res_limit_y", "Resolution limit - Y (Å)", value=round(2*1.0,4), min=2*1.0, step=1.0, update_on="blur"),
+                        ui.accordion(
+                            ui.accordion_panel(
+                                "Additional settings",
+                                ui.input_checkbox("fft_top_only", "Only display the top half of FFT", value=False),
+                                ui.input_checkbox("log_amp", "Log(amplitude)", value=True),
+                                ui.input_text("const_image_color", "Flatten the PS/PD image in this color", value="", placeholder="white"),
+                                ui.input_text("ll_colors", 'Layerline colors', value="lime cyan violet salmon silver"),
+                                ui.input_numeric("hp_fraction", 'Fourier high-pass (%)', value=0.4 * 100, min=0.0, max=100.0, step=0.1, update_on="blur"),
+                                ui.input_numeric("lp_fraction", 'Fourier low-pass (%)', value=0.0 * 100, min=0.0, max=100.0, step=10.0, update_on="blur"),
+                                ui.input_numeric("pnx", 'FFT X-dim size (pixels)', value=512, min=128, step=2, update_on="blur"),
+                                ui.input_numeric("pny", 'FFT Y-dim size (pixels)', value=1024, min=512, step=2, update_on="blur"),
+                                value="add_settings"
+                            ),
+                        ),
+                        ui.accordion(
+                            ui.accordion_panel(
+                                "Simulation",
+                                ui.input_numeric("ball_radius", 'Gaussian radius (Å)', value=0.0, min=0.0, max=100.0, step=5.0, update_on="blur"),
+                                value="simulation"
+                            ),
+                        ),
+                        ui.input_checkbox("share_url", "Show/Reload sharable URL", value=False),
+                        #ui.output_ui("col_one"),
+                        style="text-align: left; border: 1px solid #ddd; padding: 10px;",
                         class_="wrap-text"
                     ),
-                    class_="button-container"
-                ),
-                ui.column(1,
                     ui.div(
                         ui.output_ui("col_two"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 100%;",
+                        style="text-align: left; border: 1px solid #ddd; padding: 10px;",
                         class_="wrap-text"
                     ),
-                    class_="button-container"
-                ),
-                ui.column(3,
                     ui.div(
-                        ui.output_ui("col_three"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 15%;",
-                        class_="wrap-text"
+                        ui.layout_columns(
+                            ui.output_ui("helical_param_inputs"),
+                            output_widget("main_plots"),
+                            col_widths=(12,12),
+                            #row_heights=(1,4)
+                        ),
+                        style="text-align: left; border: 1px solid #ddd; padding: 10px;",
                     ),
-                    class_="button-container"
-                ),
-                ui.column(3,
-                    ui.div(
-                        ui.output_ui("col_four"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 15%;",
-                        class_="wrap-text"
-                    ),
-                    class_="button-container"
-                ),
-                ui.column(3,
-                    ui.div(
-                        ui.output_ui("col_five"),
-                        style="text-align: left; border: 1px solid #ddd; padding: 10px; height: 15%;",
-                        class_="wrap-text"
-                    ),
-                    class_="button-container"
+                    col_widths=(2,2,8)
                 ),
                 class_="scrollable-container"
             ),
         ),
-        ui.output_ui("dynamic_plot"),
         ui.row(
             ui.column(12,
                 ui.div(
-                    ui.markdown("*Developed by the [Jiang Lab@Purdue University](https://jiang.bio.purdue.edu). Report problems to [HILL@GitHub](https://github.com/jianglab/hill/issues)*"),
+                    ui.markdown("*Developed by the [Jiang Lab@Penn State](https://jianglab.science.psu.edu). Report problems to [HILL@GitHub](https://github.com/jianglab/hill/issues)*"),
                 )
             )
         ),
-        shiny_test.setup_adjustable_sidebar(width="20vw"),
+        helicon.shiny.setup_ajdustable_sidebar(width="20vw"),
     ),
 )
 
 
-
-
 def server(input, output, session):
-
-    def update_dimensions(image):
-        if image is not None:
-            if len(image.shape) == 2:
-                nx.set(image.shape[0])
-                ny.set(image.shape[1])
-                nz.set(1)
-                #ny, nx = image.shape
-                #nz = 1
-            elif len(image.shape) == 3:
-                nx.set(image.shape[0])
-                ny.set(image.shape[1])
-                nz.set(image.shape[2])
-                #nz, ny, nx = image.shape
-
-
-    prev_inputs = reactive.Value({
-        'dx': None,
-        'dy': None,
-        'angle': None
-    })
-
-    # Add effect to track input changes
-    @reactive.Effect
-    @reactive.event(input.dx, input.dy, input.angle)
-    def track_input_changes():
-        current_dx = input.dx()
-        current_dy = input.dy()
-        current_angle = input.angle()
-        
-        previous = prev_inputs()
-        
-        # Check if any values have changed
-        if (previous['dx'] is not None and 
-            (current_dx != previous['dx'] or 
-             current_dy != previous['dy'] or 
-             current_angle != previous['angle'])):
-            change_image.set(1.0)
-        
-        # Update previous values
-        prev_inputs.set({
-            'dx': current_dx,
-            'dy': current_dy,
-            'angle': current_angle
-        })
-
 
     @output
     @render.text
     def m_max_auto():
         rise = input.rise()
-        cutoff_res_y = input.cutoff_res_y()
-        return int(np.floor(np.abs(rise/cutoff_res_y))) + 3
+        res_limit_y = input.res_limit_y()
+        return int(np.floor(np.abs(rise/res_limit_y))) + 3
 
-    @reactive.Calc
+    @reactive.calc
     def m_groups():
-        return compute_layer_line_positions(
-            twist=input.twist(),
-            rise=input.rise(),
+        req(input.filament_diameter()>0)
+        req(input.res_limit_y()>0)
+        print("Updating mgroups")
+        return compute.compute_layer_line_positions(
+            twist=input.spinner_twist(),
+            rise=input.spinner_rise(),
             csym=input.csym(),
-            radius=input.helical_radius(),
-            tilt=input.tilt(),
-            cutoff_res=input.cutoff_res_y(),
+            radius=input.filament_diameter()/2,
+            tilt=input.out_of_plane_tilt(),
+            cutoff_res=input.res_limit_y(),
             m_max=input.m_max()
         )
+
+    @reactive.effect
+    @reactive.event(input.spinner_twist)
+    def _():
+        if twist() != input.spinner_twist() and input.use_twist_pitch() == "Twist":
+            twist.set(input.spinner_twist())
+            pitch.set(round(360/np.abs(twist()) * rise(),2))
+            max_rise.set(pitch())
+
+    @reactive.effect
+    @reactive.event(input.slider_twist)
+    def _():
+        if twist() != input.slider_twist() and input.use_twist_pitch() == "Twist":
+            twist.set(input.slider_twist())
+            pitch.set(round(360/np.abs(twist()) * rise(),2))
+            max_rise.set(pitch())
+
+    @reactive.effect
+    @reactive.event(input.spinner_pitch)
+    def _():
+        if pitch() != input.spinner_pitch() and input.use_twist_pitch() == "Pitch":
+            pitch.set(input.spinner_pitch())
+            twist.set(round(360/np.abs(pitch()) * rise(),2))
+            max_rise.set(pitch())
+
+    @reactive.effect
+    @reactive.event(input.slider_pitch) 
+    def _():
+        if pitch() != input.slider_pitch() and input.use_twist_pitch() == "Pitch":
+            pitch.set(input.slider_pitch())
+            twist.set(round(360/np.abs(pitch()) * rise(),2))
+            max_rise.set(pitch())
+
+    @reactive.effect
+    @reactive.event(input.spinner_rise)
+    def _():
+        if rise() != input.spinner_rise():
+            rise.set(input.spinner_rise())
+            if input.use_twist_pitch() == "Twist":
+                pitch.set(round(360/np.abs(twist()) * input.spinner_rise(),2))
+            else:
+                twist.set(round(360/np.abs(pitch()) * input.spinner_rise(),2))
+            min_pitch.set(rise())
+
+    @reactive.effect
+    @reactive.event(input.slider_rise)
+    def _():
+        if rise() != input.slider_rise():
+            rise.set(input.slider_rise())
+            if input.use_twist_pitch() == "Twist":
+                pitch.set(round(360/np.abs(twist()) * input.slider_rise(),2))
+            else:
+                twist.set(round(360/np.abs(pitch()) * input.slider_rise(),2))
+            min_pitch.set(rise())
+    
+    @reactive.effect
+    @reactive.event(input.apix)
+    def set_min_rise():
+        min_rise.set(round(2*input.apix(),2))
 
     @output
     @render.ui
     def show_choices():
         m_max = input.m_max()
-        checkboxes = [
-            ui.input_checkbox(
-                f"m_{i}",
-                label=str(i),
-                value=i in [0, 1],
-            )
-            for i in range(m_max, -1, -1)
-        ]
-        return ui.div(*checkboxes)
+        ms = dict()
+        for m in range(m_max, -m_max-1, -1):
+            ms[m] = str(m)
+        checkboxes = ui.input_checkbox_group("ms","m:",ms, selected=[-1, 0, 1])
+        return checkboxes
 
     @output
     @render.ui
     def col_one():
-        return ui.TagList(
-                ui.input_action_button("col1_saveTwist", "Save twist/rise↶", class_="save-btn-success"),
-                ui.input_numeric('csym', 'csym', value=6, min=1, step=1),
-                ui.input_numeric('filament_diameter', 'Filament/tube diameter (Å)', value=value(), min=1.0, max=1000.0, step=10.),
-                ui.input_numeric("out_of_plane_tilt", "Out-of-plane tilt (°)", value=0.0, min=-90.0, max=90.0, step=1.0),
-                ui.input_numeric('res_limit_x', 'Resolution limit - X (Å)', value=3*apix_reactive(), min=2*apix_reactive(), step=1),
-                ui.input_numeric("res_limit_y", "Resolution limit - Y (Å)", value=2*apix_reactive(), min=2*apix_reactive(), step=1.0),
+        return [
+                ui.input_numeric('csym', 'csym', value=6, min=1, step=1, update_on="blur"),
+                ui.input_numeric('filament_diameter', 'Filament/tube diameter (Å)', value=radius_auto()*2, min=1.0, max=1000.0, step=10, update_on="blur"),
+                ui.input_numeric("out_of_plane_tilt", "Out-of-plane tilt (°)", value=0.0, min=-90.0, max=90.0, step=1.0, update_on="blur"),
+                ui.input_numeric('res_limit_x', 'Resolution limit - X (Å)', value=round(3*apix_from_file(),4), min=2*apix_from_file(), step=1, update_on="blur"),
+                ui.input_numeric("res_limit_y", "Resolution limit - Y (Å)", value=round(2*apix_from_file(),4), min=2*apix_from_file(), step=1.0, update_on="blur"),
                 ui.accordion(
                     ui.accordion_panel(
                         "Additional settings",
@@ -405,362 +400,368 @@ def server(input, output, session):
                         ui.input_checkbox("log_amp", "Log(amplitude)", value=True),
                         ui.input_text("const_image_color", "Flatten the PS/PD image in this color", value="", placeholder="white"),
                         ui.input_text("ll_colors", 'Layerline colors', value="lime cyan violet salmon silver"),
-                        ui.input_numeric("hp_fraction", 'Fourier high-pass (%)', value=0.4 * 100, min=0.0, max=100.0, step=0.1),
-                        ui.input_numeric("lp_fraction", 'Fourier low-pass (%)', value=0.0 * 100, min=0.0, max=100.0, step=10.0),
-                        ui.input_numeric("pnx", 'FFT X-dim size (pixels)', value=512, min=min(nx(), 128), step=2),
-                        ui.input_numeric("pny", 'FFT Y-dim size (pixels)', value=1024, min=min(ny(), 512), step=2),
+                        ui.input_numeric("hp_fraction", 'Fourier high-pass (%)', value=0.4 * 100, min=0.0, max=100.0, step=0.1, update_on="blur"),
+                        ui.input_numeric("lp_fraction", 'Fourier low-pass (%)', value=0.0 * 100, min=0.0, max=100.0, step=10.0, update_on="blur"),
+                        ui.input_numeric("pnx", 'FFT X-dim size (pixels)', value=512, min=min(nx(),128), step=2, update_on="blur"),
+                        ui.input_numeric("pny", 'FFT Y-dim size (pixels)', value=1024, min=min(ny(), 512), step=2, update_on="blur"),
                         value="add_settings"
                     ),
                 ),
                 ui.accordion(
                     ui.accordion_panel(
                         "Simulation",
-                        ui.input_numeric("ball_radius", 'Gaussian radius (Å)', value=0.0, min=0.0, max=helical_radius(), step=5.0),
+                        ui.input_numeric("ball_radius", 'Gaussian radius (Å)', value=0.0, min=0.0, max=helical_radius(), step=5.0, update_on="blur"),
                         value="simulation"
                     ),
                 ),
                 ui.input_checkbox("share_url", "Show/Reload sharable URL", value=False),
-            )
+        ]
 
     @output
     @render.ui
     def col_two():
-        return ui.TagList(
-            ui.input_action_button("col2_saveTwist", "Save twist/rise◀", class_="save-btn-success"),
+        return [
+            ui.input_action_button("copy_twist", "Copy twist/rise◀"),
+            ui.input_radio_buttons("use_twist_pitch", "Use twist/pitch:", choices=["Twist", "Pitch"], selected="Twist"),
             ui.h5("Display:"),
             ui.input_checkbox("PS", "PS", value=True),
             ui.input_checkbox("YP", "YP", value=True),
             ui.input_checkbox("Phase", "Phase", value=False),
             ui.input_checkbox("PD", "PD", value=True),
-            ui.input_checkbox("Color", "Color", value=False),
+            ui.input_checkbox("Color", "Color", value=True),
             ui.input_checkbox("LL", "LL", value=True),
             ui.input_checkbox("LLText", "LLText", value=True),
             ui.h5("m:"),
-            ui.input_numeric("m_max", "Max=", value=m_max_auto_reactive(), min=1, step=1),
+            ui.input_numeric("m_max", "Max=", value=m_max_auto_reactive(), min=1, step=1, update_on="blur"),
             ui.output_ui("show_choices")
-        )
+        ]
 
     @output
     @render.ui
     def col_three():
-        return ui.TagList(
-            ui.input_numeric("spinner_twist", "Twist (°)", value=twist(), min=-180.0, max=180.0, step=1.0, width="300px"),
+        return [
+            ui.input_numeric("spinner_twist", "Twist (°)", value=twist(), min=-180.0, max=180.0, step=1.0, width="300px", update_on="blur"),
             ui.input_slider("slider_twist", "Twist (°)", min=-180.0, max=180.0, value=twist(), step=0.01, width="300px"),
-        )
+        ]
         
     @output
     @render.ui
     def col_four():
-        min_pitch_v = abs(rise())
-        min_pitch.set(min_pitch_v)
-        return ui.TagList(
-            ui.input_numeric("spinner_pitch", "Pitch (Å)", value=max(min_pitch(), pitch()), min=min_pitch(), step=1.0, width="300px"),
+        return [
+            ui.input_numeric("spinner_pitch", "Pitch (Å)", value=max(min_pitch(), pitch()), min=min_pitch(), step=1.0, width="300px", update_on="blur"),
             ui.input_slider("slider_pitch", "Pitch (Å)", min=pitch()/2.0, max=pitch()*2.0, value=pitch(), step=pitch()*0.002, width="300px"),
-        )
+        ]
         
     @output
     @render.ui
     def col_five():
-        return ui.TagList(
-            ui.input_numeric("spinner_rise", "Rise (Å)", value=rise(), min=min_rise(), max=max_rise(), step=1.0, width="300px"),
-            ui.input_slider("slider_rise", "Rise (Å)", min=rise()/2.0, max=min(max_rise(), rise()*2.0), value=rise(), step=min(max_rise(), rise()*2.0)*0.001, width="300px")
-        )
-
-
-    # code for the sidebar
-    # when adding the code for sharable url, you can get rid of the url variables since it's only for uploading images and parsing
-
+        return [
+            ui.input_numeric("spinner_rise", "Rise (Å)", value=rise(), min=min_rise(), max=max_rise(), step=1.0, width="300px", update_on="blur"),
+            ui.input_slider("slider_rise", "Rise (Å)", min=min_rise(), max=min(max_rise(), rise()*2.0), value=rise(), step=min(max_rise(), rise()*2.0)*0.001, width="300px")
+        ]
+    
     @output
     @render.ui
-    def conditional_3D_emd(): 
-        return ui.TagList( 
-                ui.accordion(
-                        ui.accordion_panel(
-                            ui.p("Generate 2-D projection from the 3-D map"),
-                            ui.input_checkbox("apply_helical_sym", "Apply helical symmetry", value=0),
-                            ui.output_ui("helical_sym_output"),
-                            ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
-                            ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
-                            ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
-                            value="2D_projection"
-                        )
-                ),
-                ui.accordion(
-                        ui.accordion_panel(
-                            ui.p("Image Parameters"),
-                            ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                            ui.output_ui("image_para_values"),
-                            value="image_parameters_emd"
-                        )
-                )
+    def helical_param_inputs():
+        return ui.layout_columns(
+            ui.input_numeric("spinner_twist", "Twist (°)", value=twist(), min=-180.0, max=180.0, step=1.0, width="300px", update_on="blur"),
+            ui.input_numeric("spinner_pitch", "Pitch (Å)", value=max(min_pitch(), pitch()), min=min_pitch(), step=1.0, width="300px", update_on="blur"),
+            ui.input_numeric("spinner_rise", "Rise (Å)", value=rise(), min=min_rise(), max=max_rise(), step=1.0, width="300px", update_on="blur"),
+            ui.input_slider("slider_twist", "Twist (°)", min=-180.0, max=180.0, value=twist(), step=0.01, width="300px"),
+            ui.input_slider("slider_pitch", "Pitch (Å)", min=pitch()/2.0, max=pitch()*2.0, value=pitch(), step=round(pitch()*0.002,2), width="300px"),
+            ui.input_slider("slider_rise", "Rise (Å)", min=min_rise(), max=min(max_rise(), rise()*2.0), value=rise(), step=round(min(max_rise(), rise()*2.0)*0.001,2), width="300px"),
+            col_widths=(4,4,4,4,4,4)
         )
+    
+    main_plot = reactive.value(go.FigureWidget().set_subplots(rows=1,cols=3, subplot_titles=("", "", ""), column_widths=[0.4,0.2,0.4], vertical_spacing=0,horizontal_spacing=0))
+    
+    @render_plotly
+    def main_plots():
+        return main_plot()
+    
+    @reactive.effect
+    @reactive.event(ps_data)
+    def update_main_plots():
+        req(input.res_limit_y()>0)
+        req(input.res_limit_x()>0)
+        req(ps_data() is not None)
+        print('computing ll position')
+        print(input.res_limit_y())
+        fig = main_plot()
+        data_ps = ps_data()
+        yprofile=np.mean(data_ps,axis=1)
+        yprofile/=yprofile.max()
+        data_pd = pd_data()
+        
+        print("entered main plots")
+        print(input.ms())
 
-    @output
-    @render.ui
-    def conditional_3D(): 
-        is_3d = input.is_3d()
-        prev_emdid.set(None)
-        if input.is_3d():
-            return ui.TagList( 
-                ui.accordion(
-                        ui.accordion_panel(
-                            ui.p("Generate 2-D projection from the 3-D map"),
-                            ui.input_checkbox("apply_helical_sym", "Apply helical symmetry", value=0),
-                            ui.output_ui("helical_sym_output"),
-                            ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0),
-                            ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0),
-                            ui.input_numeric("noise", "Add noise (σ):", min=0.0, value=0.0, step=0.5),
-                            value="2D_projection"
-                        )
-                ),
-                ui.accordion(
-                        ui.accordion_panel(
-                            ui.p("Image Parameters"),
-                            ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                            ui.output_ui("image_para_values"),
-                            value="image_parameters_1"
-                        )
-                    )
-                )
+        if len(fig.data) > 0:
+            print("update main plots")
+            fig.update_traces(z=data_ps,selector=dict(name="ps"))
+            fig.update_traces(x=yprofile,selector=dict(name="yprofile"))
+            fig.update_traces(z=data_pd,selector=dict(name="pd"))
         else:
-            return ui.TagList(
-                ui.accordion(
-                    ui.accordion_panel(
-                        ui.div(
-                            ui.p("Choose an image"),
-                            ui.output_ui("dynamic_image_select_url"),
-                            style="max-height: 500px; overflow-y: auto;"
-                        ),
-                        value="image_selection"
+            print("create main plots")
+            ny, nx = data_ps.shape
+            dsy = 1/(ny//2*input.res_limit_y())
+            dsx = 1/(nx//2*input.res_limit_x())
+            x_range = (-(nx//2+0.5)*dsx, (nx//2-0.5)*dsx)
+            if input.fft_top_only():
+                y_range = (-(ny//2 * 0.01)*dsy, (ny//2-0.5)*dsy)
+            else:
+                y_range = (-(ny//2+0.5)*dsy, (ny//2-0.5)*dsy)
+            
+            if input.Color():
+                plot_color = "viridis"
+            else:
+                plot_color = "gray"
+
+            xs = np.linspace(x_range[0],x_range[1],input.pnx())
+            ys = np.linspace(y_range[0],y_range[1],input.pny())
+            print("xs:", x_range)
+            print("ys:", y_range)
+
+            fig.add_trace(
+                go.Heatmap(
+                    name="ps",
+                    z=data_ps,
+                    x=xs,
+                    y=ys,
+                    xaxis="x1",
+                    yaxis="y1",
+                    colorscale=plot_color,
+                    showscale=False,
                     ),
-                ),
-                ui.accordion(
-                    ui.accordion_panel(
-                        ui.p("Image Parameters"),
-                        ui.input_action_button("skip_image", "Skip this image"),
-                        ui.input_radio_buttons("input_type", "Input is:", choices=["image", "PS", "PD"], inline=True),
-                        ui.output_ui("image_para_values"),
-                        value="image_parameters_2"
-                    )
-                ),
+                row=1,col=1
             )
-        
+            fig.add_trace(
+                go.Line(
+                    name="yprofile",
+                    x=yprofile,
+                    y=ys,
+                    xaxis="x2",
+                    yaxis="y1",
+                    ),
+                row=1,col=2
+            )
+            fig.add_trace(
+                go.Heatmap(
+                    name="pd",
+                    z=data_pd,
+                    x=xs,
+                    y=ys,
+                    xaxis="x3",
+                    yaxis="y1",
+                    colorscale=plot_color,
+                    showscale=False,
+                    ),
+                row=1,col=3
+            )
 
-    @reactive.Effect
-    @reactive.event(selected_images)
-    def reset_image_params():
-        """Reset image parameters when a new image is selected."""
-        if selected_images() and len(selected_images()) > 0:
-            user_inputs.set({
-                'apix': None,
-                'angle': None,
-                'dx': None,
-                'dy': None,
-                'mask_radius': None
-            })
-            change_image.set(0.0)
-
-    # updating apix value
-    @reactive.Effect
-    @reactive.event(input.input_type, input.apix)
-    def set_apix():
-        input_type = input.input_type()
-        apix_value = input.apix()
-        
-        if input_type in ["PS", "PD"]:
-            apix_reactive.set(apix_value * 0.5)
-            return apix_value * 0.5
-        
-        apix_reactive.set(apix_value)
-        return apix_value
-
-    @reactive.Effect
-    @reactive.event(input.input_type, selected_images)
-    def reset_on_input_type_change():
-        """Reset user inputs when input type changes"""
-        if selected_images() and len(selected_images()) > 0:
-            user_inputs.set({
-                'apix': None,
-                'angle': None,
-                'dx': None,
-                'dy': None,
-                'mask_radius': None
-            })
-
-    @reactive.Calc
-    def get_apix():
-        """Get the current apix value based on user input or auto calculation"""
-        user_apix = user_inputs()['apix']
-        if user_apix is not None:
-            return user_apix
+            fig.update_xaxes(showticklabels=False, range=[x_range[0],x_range[1]])
+            fig.update_yaxes(showticklabels=False, range=[y_range[0],y_range[1]])
+            fig.update_xaxes(range=[0,1], row=1,col=2)
             
-        input_type = input.input_type()
-        auto_val = apix_auto()
-        
-        if input_type in ["PS", "PD"]:
-            return auto_val * 0.5
-        return auto_val
+            fig.update_xaxes(showspikes=True, spikemode="across")
+            fig.update_yaxes(showspikes=True, spikemode="across")
+            fig.update_layout(
+                hoversubplots="axis",
+                yaxis_title="",
+                hovermode="y unified",
+                showlegend=False,
+                height=input.pny(),
+                autosize=True,
+                coloraxis_showscale=False,
+            )
+            fig.layout.xaxis1.title="Power Spectrum"
+            fig.layout.xaxis2.title="Y-profile"
+            fig.layout.xaxis3.title="Phase Difference"
+            fig.update_traces(yaxis='y1')
 
+            # curr_m_groups=compute_layer_line_positions(
+            #     twist=input.spinner_twist(),
+            #     rise=input.spinner_rise(),
+            #     csym=input.csym(),
+            #     radius=input.filament_diameter()/2,
+            #     tilt=input.out_of_plane_tilt(),
+            #     cutoff_res=input.res_limit_y(),
+            #     m_max=input.m_max()
+            # )
 
-
-    @reactive.Calc
-    def get_angle():
-        """Get the current angle value based on user input or auto calculation"""
-        user_angle = user_inputs()['angle']
-        if user_angle is not None:
-            return user_angle
-        if angle_auto() == 0.0:
-            return 0.0
-        
-        return -abs(angle_auto())
-        
-        
-
-
-    @reactive.Calc
-    def get_dx():
-        """Get the current dx value based on user input or auto calculation"""
-        user_dx = user_inputs()['dx']
-        if user_dx is not None:
-            return user_dx
-        return dx_auto() * get_apix()
-        
-
-    @reactive.Calc
-    def get_dy():
-        """Get the current dy value based on user input or auto calculation"""
-        user_dy = user_inputs()['dy']
-        if user_dy is not None:
-            return user_dy
-        return 0.0
-        
-
-    @reactive.Calc
-    # @reactive.event(mask_radius_auto) # RIGHT NOW: mask_radius_auto
-    def get_mask_radius():
-        """Get the current mask radius based on user input or auto calculation"""
-        user_radius = user_inputs()['mask_radius']
-        if user_radius is not None:
-            return user_radius
+            curr_m_groups = m_groups()
+            #print("Current m_groups:")
+            #print(curr_m_groups[0]["LL"])
             
-        input_type = input.input_type()
-        if input_type in ["PS", "PD"]:
-            return 0.0  # No mask radius needed for PS/PD
+            curr_ll_colors=input.ll_colors()
+            if input.LL() and max(curr_m_groups[0]["LL"][0])>0:
+                x, y, n = curr_m_groups[0]["LL"]
+                tmp_x = np.sort(np.unique(x))
+                width = np.mean(tmp_x[1:]-tmp_x[:-1])
+                height = width/5
+                shapes = []
+                for mi, m in enumerate(curr_m_groups.keys()):
+                    if str(m) not in input.ms(): continue
+                    xs, ys, bessel_order = curr_m_groups[m]["LL"]
+                    tags = [m, bessel_order]
+                    color = curr_ll_colors.split()[abs(m)%len(curr_ll_colors)]
+                    fills = [n%2*1.0 for n in bessel_order]
+                    if input.LLText():
+                        texts = [str(int(n)) for n in bessel_order]
+                        for (x,y,text) in zip(xs,ys,texts):
+                            shapes += [
+                                dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, label=dict(text=text, font=dict(color=color)), opacity=0, line_color=color, name='ll', xref="x1",yref="y1"),
+                                dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, label=dict(text=text, font=dict(color=color)), opacity=0, line_color=color, name='ll', xref="x3",yref="y1"),
+                            ]
+                    else:
+                        for (x,y,fill) in zip(xs,ys,fills):
+                            if fill:
+                                shapes += [
+                                    dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, fillcolor=color, name='ll', xref="x1",yref="y1"),
+                                    dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, fillcolor=color, name='ll', xref="x3",yref="y1"),
+                                ]
+                            else:
+                                shapes += [
+                                    dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, name='ll', xref="x1",yref="y1"),
+                                    dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, name='ll', xref="x3",yref="y1"),
+                                ]
             
-        # Only calculate mask radius for 'image' type
-        auto_radius = mask_radius_auto() * get_apix()
-        max_radius = nx()/2 * get_apix()
-        return min(auto_radius, max_radius)
-        
-        
+                fig.layout.shapes = shapes
+        #return fig
 
-    # Handle user input changes
-    @reactive.Effect
-    @reactive.event(input.apix)
-    def update_user_apix():
-        current = user_inputs()
-        current['apix'] = input.apix()
-        user_inputs.set(current)
-
-
-
-    @reactive.Effect
-    @reactive.event(input.angle)
-    def update_user_angle():
-        current = user_inputs()
-        current['angle'] = input.angle()
-        user_inputs.set(current)
-
-
-
-    @reactive.Effect
-    @reactive.event(input.dx)
-    def update_user_dx():
-        current = user_inputs()
-        current['dx'] = input.dx()
-        user_inputs.set(current)
-
-
-
-    @reactive.Effect
-    @reactive.event(input.dy)
-    def update_user_dy():
-        current = user_inputs()
-        current['dy'] = input.dy()
-        user_inputs.set(current)
-        
-
-    @reactive.Effect
-    @reactive.event(input.mask_radius)
-    def update_user_mask_radius():
-        current = user_inputs()
-        current['mask_radius'] = input.mask_radius()
-        user_inputs.set(current)
-
-
-    @reactive.Effect
-    @reactive.event(input.input_mode_params, input.url_params, input.upload_classes)
-    def reset_user_inputs():
-        """Reset user inputs when loading new data"""
-        user_inputs.set({
-            'apix': None,
-            'angle': None,
-            'dx': None,
-            'dy': None,
-            'mask_radius': None
-        })
-
-        
+    @reactive.effect
+    @reactive.event(m_groups, input.ms, input.LL, input.LLText, input.ll_colors)
+    def update_layer_lines():
+        print("Updating layer lines")
+        print("input.LL():", input.LL())
+        print("input.LLText():", input.LLText())
+        fig = main_plot()
+        if input.LL():
+            if len(fig.data) > 0:
+                curr_m_groups = m_groups()
+                #print("Current m_groups:")
+                #print(curr_m_groups[0]["LL"])
+                
+                curr_ll_colors=input.ll_colors()
+                if max(curr_m_groups[0]["LL"][0])>0:
+                    x, y, n = curr_m_groups[0]["LL"]
+                    tmp_x = np.sort(np.unique(x))
+                    width = np.mean(tmp_x[1:]-tmp_x[:-1])
+                    height = width/5
+                    shapes = []
+                    for mi, m in enumerate(curr_m_groups.keys()):
+                        if str(m) not in input.ms(): continue
+                        xs, ys, bessel_order = curr_m_groups[m]["LL"]
+                        tags = [m, bessel_order]
+                        color = curr_ll_colors.split()[abs(m)%len(curr_ll_colors)]
+                        fills = [n%2*1.0 for n in bessel_order]
+                        if input.LLText():
+                            texts = [str(int(n)) for n in bessel_order]                
+                            for (x,y,text) in zip(xs,ys,texts):
+                                shapes += [
+                                    dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, label=dict(text=text, font=dict(color=color)), opacity=0, line_color=color, fillcolor=color, name='ll', xref="x1",yref="y1"),
+                                    dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, label=dict(text=text, font=dict(color=color)), opacity=0, line_color=color, fillcolor=color, name='ll', xref="x3",yref="y1"),
+                                ]
+                        else:
+                            for (x,y,fill) in zip(xs,ys,fills):
+                                if fill:
+                                    shapes += [
+                                        dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, fillcolor=color, name='ll', xref="x1",yref="y1"),
+                                        dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, fillcolor=color, name='ll', xref="x3",yref="y1"),
+                                    ]
+                                else:
+                                    shapes += [
+                                        dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, name='ll', xref="x1",yref="y1"),
+                                        dict(type='circle',x0=x-width/2, y0=y-height/2, x1=x+width/2, y1=y+height/2, line_color=color, name='ll', xref="x3",yref="y1"),
+                                    ]
+                
+                    fig.layout.shapes = shapes
+        else:
+            print("Removing layer lines")
+            #fig.update_layout(shapes=[])
+            fig.layout.shapes = []
 
     @output
     @render.ui
-    def image_para_values():
-        value = input.input_type()
+    def conditional_3d_transformation_uis(): 
+        if input.is_3d():
+            return [
+                ui.accordion(
+                    ui.accordion_panel(
+                        ui.p("Generate 2-D projection from the 3-D map"),
+                        ui.input_checkbox("apply_helical_sym", "Apply helical symmetry", value=0),
+                        ui.output_ui("apply_helical_sym_uis"),
+                        ui.input_numeric("az", "Rotation around the helical axis (°):", min=0.0, max=360., value=0.0, step=1.0, update_on="blur"),
+                        ui.input_numeric("tilt", "Tilt (°):", min=-180.0, max=180., value=0.0, step=1.0, update_on="blur"),
+                        ui.input_numeric("gauss_noise_std", "Add Gaussian noise (σ):", min=0.0, value=0.0, step=0.5, update_on="blur"),
+                        ui.input_action_button("generate_2d_projection", "Generate 2D projection"),
+                        value="2D_projection",
+                        open=False
+                    )
+                ),
+            ]
+        else:
+            return None
 
+    @output
+    @render.ui
+    def img_2d_transformation_uis():
+        value = input.input_type()
         if value in ['image']:
-            return ui.TagList(
+            return [
                 ui.input_numeric(
                     "apix", 
                     "Pixel size (Å/pixel)", 
-                    value=get_apix(),
+                    #value=apix_from_file(),
+                    value=1.0,
                     min=0.1, 
                     max=30.0, 
-                    step=0.01
+                    step=0.01,
+                    update_on="blur"
                 ),
-                ui.output_ui("add_transpose"),
+                #ui.output_ui("add_transpose"),
                 ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
                 ui.input_checkbox("straightening", "Straighten the filament", value=False),
                 ui.input_numeric(
                     "angle", 
                     "Rotate (°)", 
-                    value=get_angle(),
+                    value=angle_auto(),
                     min=-180.0, 
                     max=180.0, 
-                    step=1.0
+                    step=1.0,
+                    update_on="blur"
                 ),
                 ui.input_numeric(
                     "dx", 
                     "Shift along X-dim (Å)", 
-                    value=get_dx(),
-                    min=-nx()*get_apix(), 
-                    max=nx()*get_apix(), 
-                    step=1.0
+                    value=dx_auto(),
+                    min=-500.0, 
+                    max=500.0, 
+                    # min=-nx()*apix_from_file(), 
+                    # max=nx()*apix_from_file(), 
+                    step=1.0,
+                    update_on="blur"
                 ),
                 ui.input_numeric(
                     "dy", 
                     "Shift along Y-dim (Å)", 
-                    value=get_dy(),
-                    min=-ny()*get_apix(), 
-                    max=ny()*get_apix(), 
-                    step=1.0
+                    value=dy_auto(),
+                    min=-500.0, 
+                    max=500.0, 
+                    # min=-ny()*apix_from_file(), 
+                    # max=ny()*apix_from_file(), 
+                    step=1.0,
+                    update_on="blur"
                 ),
                 ui.input_numeric(
                     "mask_radius", 
                     "Mask radius (Å)", 
-                    value=get_mask_radius(),
+                    value=mask_radius_auto(),
                     min=1.0, 
-                    max=nx()/2*get_apix(), 
-                    step=1.0
+                    max=500.0, 
+                    # max=nx()/2*apix_from_file(), 
+                    step=1.0,
+                    update_on="blur"
                 ),
                 ui.input_numeric(
                     "mask_len", 
@@ -768,293 +769,182 @@ def server(input, output, session):
                     value=mask_len_percent_auto(), 
                     min=10.0, 
                     max=100.0, 
-                    step=1.0
+                    step=1.0,
+                    update_on="blur"
                 ),
-            )
+            ]
         elif value in ['PS', 'PD']:
-            return ui.TagList(
+            return [
                 ui.input_numeric(
                     "apix", 
                     "Nyquist res (Å)", 
-                    value=2*apix_auto(),
+                    #value=2*apix_from_file(),
+                    value=1.0,
                     min=0.1, 
                     max=30.0, 
-                    step=0.01
+                    step=0.01,
+                    update_on="blur"
                 ),
-                ui.output_ui("add_transpose"),
-                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
                 ui.input_numeric(
                     "angle", 
                     "Rotate (°)", 
-                    value=get_angle(),
+                    value=angle_auto(),
                     min=-180.0, 
                     max=180.0, 
-                    step=1.0
+                    step=1.0,
+                    update_on="blur"
                 ),
                 ui.input_numeric(
                     "dx", 
                     "Shift along X-dim (Å)", 
-                    value=get_dx(),
-                    min=-nx()*get_apix(), 
-                    max=nx()*get_apix(), 
-                    step=1.0
+                    value=dx_auto(),
+                    min=-nx()*apix_from_file(), 
+                    max=nx()*apix_from_file(), 
+                    step=1.0,
+                    update_on="blur"
                 ),
                 ui.input_numeric(
                     "dy", 
                     "Shift along Y-dim (Å)", 
-                    value=get_dy(),
-                    min=-ny()*get_apix(), 
-                    max=ny()*get_apix(), 
-                    step=1.0
+                    value=dy_auto(),
+                    min=-ny()*apix_from_file(), 
+                    max=ny()*apix_from_file(), 
+                    step=1.0,
+                    update_on="blur"
                 ),
-            )
+            ]
 
-
-
-
-
-
-    @output
     @render.ui
     @reactive.event(input.is_3d, input.input_mode_params)
     def add_transpose():
         transpose_auto = input.input_mode_params() not in [2, 3] and nx() > ny()
-        # print("is_3d: ", input.is_3d())
-        # if input.input_mode_params() == "3":
-        #     return ui.TagList(
-        #         ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
-        #     )
+        if not input.is_3d():
+            return ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
 
-        if input.is_3d():
-            return ui.TagList(
-                    ui.input_checkbox("transpose", "Transpose the image", value=transpose_auto),
-            )
-
-    # updating apix_auto value
-    @reactive.Effect
-    @reactive.event(input.input_mode_params, input.url_params)
-    def set_apix_auto_url():
-        mode = input.input_mode_params()
-        # {"1": "upload", "2": "url", "3": "emd-xxxxx"}
-
-        if mode == "1": # upload
-            pass
-
-            fileobj = input.upload_classes()
-            data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_uploaded_file(fileobj)
-            apix_auto.set(apix_auto_v)
-
-            # is_3d_auto = guess_if_3d(filename=fileobj.name, data=data_all())
-            # is_3d_reactive.set(is_3d_auto)
-        elif mode == "2": # url
-            image_url = input.url_params()
-            data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_url(image_url)
-            apix_auto.set(apix_auto_v)
-        else: # emd
-            # data_all, map_crs_auto, apix_auto = get_emdb_map(emd_id)
-            pass
+    # @reactive.effect
+    # @reactive.event(selected_images)
+    # def set_transformation_parameters_auto():
+    #     req(selected_images())
+    #     # if input.input_mode_params() == "3":
+    #     #     angle_auto.set(0.0)
+    #     #     dx_auto.set(0.0)
+    #     #     dy_auto.set(0.0)
+    #     #     return
         
-    @reactive.Effect
-    @reactive.event(input.input_mode_params, input.upload_classes)
-    def set_apix_auto_upload():
-        mode = input.input_mode_params()
-        if mode == "1" and input.upload_classes(): # upload
-            fileobj = input.upload_classes()
-            file_info = fileobj[0]['datapath']
-            data_all_v, map_crs_auto_v, apix_auto_v = get_2d_image_from_uploaded_file(input.upload_classes()[0])
-            apix_auto.set(apix_auto_v)
+    #     mode = input.input_type() 
 
-    # TODO: make set_apix_auto for emd selection
+    #     if mode in ["PS", "PD"]:
+    #         # angle_auto.set(0.0)
+    #         # dx_auto.set(0.0)
+    #         # dy_auto.set(0.0)
+    #         ui.update_numeric('angle', value=0.0)
+    #         ui.update_numeric('dx', value=0.0)
+    #         ui.update_numeric('dy', value=0.0)
+    #     else:
+    #         print("Estimating auto transformation parameters...")
+    #         ang_auto_v, dy_auto_v, diameter = helicon.estimate_helix_rotation_center_diameter(selected_images()[0], estimate_center=True, estimate_rotation=True)
+    #         # angle_auto.set(round(ang_auto_v+90,2))
+    #         # dy_auto.set(round(dy_auto_v*input.apix(),2))
+    #         # mask_radius_auto.set(round(diameter/2*input.apix(),2))
+    #         print("Estimated angle:", ang_auto_v+90)
+    #         print("input angle before:", input.angle())
+    #         ui.update_numeric('angle', value=round(ang_auto_v+90,2))
+    #         print("input angle after:", input.angle())
+    #         ui.update_numeric('dy', value=round(dy_auto_v*input.apix(),2))
+    #         ui.update_numeric('mask_radius', value=round(diameter/2*input.apix(),2))
+    #         mask_len_percent_auto_default = 90.0
+    #         if input.straightening():
+    #             mask_len_percent_auto_default = 100.0
+    #         #mask_len_percent_auto.set(mask_len_percent_auto_default)
+    #         ui.update_numeric('mask_len', value=mask_len_percent_auto_default)
+    #     print(selected_images())
+    #     print("Auto transformation parameters set: angle=", input.angle())
 
-    @reactive.Effect
-    @reactive.event(input.input_type, data_transform)
-    def set_angle_auto():
-        # if input.input_mode_params() == "3":
-        #     angle_auto.set(0.0)
-        #     dx_auto.set(0.0)
-        #     dy_auto.set(0.0)
-        #     return
-        
-        mode = input.input_type() 
-
-        prev_dx_val.set(dx_auto())
-
-        # if input.input_mode_params() == "3":
-        #     is_3d_reactive.set(True)
-
-        if mode in ["PS", "PD"]:
-            angle_auto.set(0.0)
-            dx_auto.set(0.0)
-        elif is_3d_reactive():
-            angle_auto.set(0.0)
-            dx_auto.set(0.0)
-        elif selected_images() and len(selected_images()) > 0 and data() is not None:
-            ang_auto_v, dx_auto_v = auto_vertical_center(selected_images()[0])# data())
-            angle_auto.set(ang_auto_v)
-            dx_auto.set(dx_auto_v)
-
-        if selected_images() and len(selected_images()) > 0:
-            aspect_ratio = float(nx() / ny())
-        
-        if input.straightening() and aspect_ratio < 1 and selected_images() and len(selected_images()) > 0:
-            aspect_ratio = float(nx() / ny())
-            angle_auto.set(0.0)
-
-
-        curr_dx_val.set(dx_auto())
-
-        if input.input_mode_params() == "3": # IS THIS OK??
-            angle_auto.set(0.0)
-            dx_auto.set(0.0)
-            dy_auto.set(0.0)
-        
-        
-
-    # FIXING HERRE
-    @reactive.Effect
-    @reactive.event(input.input_type, data_transform)
-    def set_mask_radius_auto(): 
-        # radius_auto, mask_radius_auto = estimate_radial_range(data, thresh_ratio=0.1)
+    @reactive.effect
+    @reactive.event(selected_images, input.apix, input.angle, input.dx, input.dy, input.mask_radius)
+    def set_data_2d_transformed():
+        req(input.input_type() in ["image"])
+        req(len(selected_images())>0)
+        req(input.apix()!=0)
+        if (input.angle() or input.dx() or input.dy() or input.negate() or input.mask_radius()):
+            data_2d_transformed.set(compute.mask_2d_filament(compute.transform_2d_filament(selected_images()[0],input.angle(),input.dx(),input.dy(),input.negate(),input.apix()),input.mask_radius(), input.apix(), input.mask_len()/100.0))
+    
+    @reactive.effect
+    @reactive.event(data_2d_transformed)
+    def set_mask_radius_auto():
+        req(data_2d_transformed() is not None) 
         input_type = input.input_type()
-        # print("prev_dx_val, curr_dx_val, dx_auto: ", prev_dx_val(), curr_dx_val(), dx_auto())
-        if input_type in ["image"] and selected_images() and len(selected_images()) > 0 and data_transform() is not None and (prev_dx_val() == curr_dx_val()):
-            radius_auto_v, mask_radius_auto_v = estimate_radial_range(data_transform(), thresh_ratio=0.1)
-            # print("radius_auto_v, mask_radius_auto_v, displayed_class_labels, input.dx, input.dy, input.angle", 
-            #     radius_auto_v, mask_radius_auto_v, displayed_class_labels(), input.dx(), input.dy(), input.angle())
-            # print("previous dx: ", prev_dx_val())
-            mask_radius_auto.set( mask_radius_auto_v)
-            radius_auto.set(radius_auto_v)
-            change_image.set(0.0)
-
-        mask_len_percent_auto_v = 90.0
-        if input.straightening():
-            mask_len_percent_auto_v = 100.0
-        mask_len_percent_auto.set(mask_len_percent_auto_v)
-
-    # FIXING HERE
-    @reactive.Effect
-    @reactive.event(input.angle, input.dx, input.dy, input.apix, data, selected_images)
-    def set_data():
-        # Initialize data_v
-        data_v = None
-        
-        # Check if there are selected images
-        if selected_images() and len(selected_images()) > 0:
-            data_v = selected_images()[0]
-            # print("Initial data_v retrieved.")
-
-        # Apply transformations conditionally
-        if input.is_3d():
-            # print("Processing as 3D input.")
-            if input.transpose():
-                # print("Applying transpose.")
-                data_v = data_v.T
-            
-        if input.negate():
-            # print("Inverting image contrast.")
-            data_v = -data_v
-
-        # Handle rotation and shift
-        angle_value = input.angle()
-        dx_value = input.dx()
-        dy_value = input.dy()
-        apix_value = input.apix()
-        
-        # print(f"Transform parameters - Angle: {angle_value}, Dx: {dx_value}, Dy: {dy_value}, Apix: {apix_value}")
-
-        if (angle_value or dx_value or dy_value) and data_v is not None and apix_value != 0 and apix_value != 0:
-            # print("Applying rotation and shift.")
-            data_v = rotate_shift_image(
-                data_v, 
-                angle=-angle_value, 
-                post_shift=(dy_value / apix_value, dx_value / apix_value), 
-                order=1
-            )
-            # print("Rotation and shift applied.")
-
-        # Update the reactive `data` object
-        if data_v is not None:
-            data_transform.set(data_v)
-            print("set here")
-
-            if input.dx() != 0:
-                change_image.set(1.0)
-            # print("Updated data reactive with transformed data_v.")
-   
-
-
-
-
-    # code added from the Helical Pitch Image Selection:
+        if input_type in ["image"]:
+            radius_auto_v, _ = compute.estimate_radial_range(data_2d_transformed(), thresh_ratio=0.1)
+            #radius_auto.set(round(radius_auto_v*input.apix(),2))
+            ui.update_numeric('filament_diameter', value=round(radius_auto_v*input.apix(),2))
+    
+    @reactive.effect
+    def get_ps_pd_data():
+        req(data_2d_transformed() is not None)
+        req(input.apix()>0)
+        req(input.res_limit_y()>0)
+        req(input.res_limit_x()>0)
+        pwr, phase = compute_power_spectra(data_2d_transformed(), apix=input.apix(), cutoff_res=(input.res_limit_y(), input.res_limit_x()), 
+                output_size=(input.pny(), input.pnx()), log=True, low_pass_fraction=0, high_pass_fraction=0.4*100)
+        ps_data.set(pwr)
+        pd_data.set(compute.compute_phase_difference_across_meridian(phase))
+    
     @output
     @render.ui
-    def sidebar_text():
+    def conditional_input_uis():
         selection = input.input_mode_params()
-        
-        # Create the is_3d checkbox with current dimensions
-        is_3d_checkbox = ui.input_checkbox(
-            "is_3d",
-            f"The input ({nx()}x{ny()}x{nz()}) is a 3D map",
-            value=(nz() > 1)  # Automatically set based on nz dimension
-        )
-        
         if selection == "1":  # Upload
-            return ui.TagList(
+            return [
                 ui.p("Upload a mrc or mrcs file"),
                 ui.input_file(
-                    "upload_classes",
-                    "Upload the class averages in MRC format (.mrcs, .mrc)",
-                    accept=[".mrcs", ".mrc"],
-                    placeholder="mrcs or mrc file",
+                    "img_file_upload",
+                    "Upload the image file (.mrcs, .mrc, .map)",
+                    accept=[".mrcs", ".mrc", ".map",".map.gz"],
+                    placeholder="image file",
                 ),
-                ui.input_action_button("run", label="Run", style="width: 100%;"),
                 ui.input_checkbox("is_3d", "The input is a 3D map", value=False),
                 # ui.input_checkbox("ignore_blank", "Ignore blank classes", value=True),
-                ui.output_ui("conditional_3D"),
-                output_widget("display_micrograph"),
-                output_widget("transformed_display_micrograph"),
-                output_widget("plot_graph"),
-                output_widget("acf_plot"),
-            )
+            ]
         elif selection == "2":  # URL
-            return ui.TagList(
+            return [
                 ui.input_text(
-                    "url_params",
+                    "img_file_url",
                     "Input a url of 2D image(s) or a 3D map:",
                     value=urls[url_key][0],
                 ),
-                ui.input_action_button("run", label="Run", style="width: 100%;"),
                 ui.input_checkbox("is_3d", "The input is a 3D map", value=False),
-                ui.output_ui("conditional_3D"),
-                output_widget("display_micrograph"),
-                output_widget("transformed_display_micrograph"),
-                output_widget("plot_graph"),
-                output_widget("acf_plot"),
-
-            )
+            ]
         elif selection == "3":  # EMD-xxxxx
-            return ui.TagList(
-                    ui.output_ui("get_link_emd"),
-                    ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
-                    ui.input_action_button("select_emdb", "Select a random EMDB ID", value=False),
-                    ui.output_ui("conditional_3D_emd"),
-                    output_widget("display_micrograph"),
-                    output_widget("transformed_display_micrograph"),
-                    output_widget("plot_graph"),
-                    output_widget("acf_plot"),
-
-                )
-            # try to do random input, otherwise it's ok to leave out
+            return [
+                    ui.input_text("img_file_emd_id", "Input an EMDB ID (emd-xxxxx):", value="emd-10499"),
+                    #ui.output_ui("get_link_emd"),
+                    #ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
+                    ui.input_action_button("select_random_emdb", "Select a random EMDB ID", value=False),
+                    ui.input_checkbox("is_3d", "The input is a 3D map", value=True),
+            ]
         else:
             return ui.p("Please select an option to proceed.")
+    
+    # @reactive.event(input_data, input.is_3d)
+    # def get_2d_data():
+    #     if input.is_3d():
+    #         pass
+    
+    @render.ui
+    @reactive.event(input_data, input.is_3d)   
+    def input_display_uis():
+        return ui.div(
+                    ui.output_ui("input_image_selection_gallery"),
+                    style="max-height: 500px; overflow-y: auto;"
+                )
 
-
-    @reactive.Calc
-    def max_map_set():
-        if is_hosted():
-            max_map_size_t  = mem_quota()/2    # MB
+    @reactive.effect
+    def max_map_size_set():
+        if util.is_hosted():
+            max_map_size_t  = util.mem_quota()/2    # MB
             max_map_dim_t   = int(pow(max_map_size*pow(2, 20)/4, 1./3.)//10*10)    # pixels in any dimension
-            stop_map_size_t = mem_quota()*0.75 # MB
+            stop_map_size_t = util.mem_quota()*0.75 # MB
 
             max_map_size.set(max_map_size_t)
             max_map_dim.set(max_map_dim_t)
@@ -1064,165 +954,146 @@ def server(input, output, session):
             max_map_dim_t  = -1
             max_map_size.set(max_map_size_t)
             max_map_dim.set(max_map_dim_t)
-        if max_map_size>0:
+        if max_map_size()>0:
             warning_map_size = f"Due to the resource limit, the maximal map size should be {max_map_dim}x{max_map_dim}x{max_map_dim} voxels or less to avoid crashing the server process"
     
     
+    
+    
     #@output
-    #@render.ui
-    @reactive.event (input.input_mode_params, input.select_emdb, input.input_emd)
+    @render.ui
+    @reactive.event (input.input_mode_params, input.img_file_emd_id)
     def get_link_emd():
-        if input.input_mode_params() != "3":
-            print("not emd")
-            return
+        req(input.input_mode_params() == "3")
+        req(input.img_file_emd_id())
+        emdb = helicon.dataset.EMDB()
+        emd_ids = emdb.helical_structure_ids()
+        print(emd_ids)
+        return len(emd_ids)
+
+        # emdb_ids_all, methods, resolutions, _, emdb_ids_helical = util.get_emdb_ids()
+        # url = "https://www.ebi.ac.uk/emdb/search/*%20AND%20structure_determination_method:%22helical%22?rows=10&sort=release_date%20desc"
+        # if emdb_ids_helical is None:
+        #     return
+        # msg = ""
+
+        # selected_id = str(10499) # str(random.choice(arr))
+        # # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
+
+        # id = input.img_file_emd_id().lower().split("emd-")[-1]
         
-        emdb_ids_all, methods, resolutions, _, emdb_ids_helical = get_emdb_ids()
-        url = "https://www.ebi.ac.uk/emdb/search/*%20AND%20structure_determination_method:%22helical%22?rows=10&sort=release_date%20desc"
-        if emdb_ids_helical is None:
-            return
-        msg = ""
+        # if id != selected_id:
+        #     emd_id.set(id)
+        # elif not key_emd_id():
+        #     selected_id = str(10499) # str(random.choice(arr))
+        #     key_emd_id.set('emd-' + selected_id)
+        #     emd_id.set(key_emd_id().lower().split("emd-")[-1])
 
-        arr = [51000, 17729, 15499, 50089, 42931]
-        selected_id = str(10499) # str(random.choice(arr))
-        print("1")
-        # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
+        #     msg = f'[EMD-{emd_id()}](https://www.ebi.ac.uk/emdb/entry/EMD-{emd_id()})'
+        #     emd_url.set(msg)
+        #     resolution = resolutions[emdb_ids_all.index(emd_id())]
+        #     msg += f' | resolution={resolution}Å'
+        #     params = util.get_emdb_helical_parameters(emd_id())
 
-        id = input.input_emd().lower().split("emd-")[-1]
-        
-        print("id: ", id)
-        if id != selected_id:
-            print("in here 1")
-            emd_id.set(id)
-        elif not key_emd_id() or input.select_emdb():
-            print("in here 2")
-            selected_id = str(10499) # str(random.choice(arr))
-            key_emd_id.set('emd-' + selected_id)
-            emd_id.set(key_emd_id().lower().split("emd-")[-1])
-
-            print('2')
-            msg = f'[EMD-{emd_id()}](https://www.ebi.ac.uk/emdb/entry/EMD-{emd_id()})'
-            emd_url.set(msg)
-            resolution = resolutions[emdb_ids_all.index(emd_id())]
-            msg += f' | resolution={resolution}Å'
-            params = get_emdb_helical_parameters(emd_id())
-            print(msg)
-            print("params")
-            print(params)
-
-            if params and ("twist" in params and "rise" in params and "csym" in params):           
-                msg += f"  \ntwist={params['twist']}° | rise={params['rise']}Å"
-                if params.get("csym_known", True): msg += f" | c{params['csym']}"
-                else: msg += " | csym n/a"
-                if emd_id != prev_emdid():
-                    prev_emdid.set(emd_id)
-                    rise.set(params['rise'])
-                    twist.set(params['twist'])
-                    pitch.set(twist2pitch(twist=twist(), rise=rise()))
-                    csym.set(params['csym'])
-            else:
-                msg +=  "  \n*helical params not available*"
-            msg_reactive.set(msg)
-
-
-
-        return
-        #return ui.TagList(
-        #        ui.markdown(msg_reactive()),
-        #        ui.markdown(f'[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
-        #)
-
+        #     if params and ("twist" in params and "rise" in params and "csym" in params):           
+        #         msg += f"  \ntwist={params['twist']}° | rise={params['rise']}Å"
+        #         if params.get("csym_known", True): msg += f" | c{params['csym']}"
+        #         else: msg += " | csym n/a"
+        #         rise.set(params['rise'])
+        #         twist.set(params['twist'])
+        #         pitch.set(compute.twist2pitch(twist=twist(), rise=rise()))
+        #         csym.set(params['csym'])
+        #     else:
+        #         msg +=  "  \n*helical params not available*"
+        #     msg_reactive.set(msg + f'\n[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
+    
     @reactive.effect
-    @reactive.event(input.input_mode_params, input.input_emd, twist, rise, csym, emd_url)
-    def get_map_from_url():
-        # Check if we're in EMD mode (mode "3")
-        # print("begin get_map_from_url")
-        if input.input_mode_params() != "3":
-            print("not emd")
-            return
-            
-        # print("running get_map_from_url 1")
-        # Check if required inputs are available
-        if not input.input_emd():
-            print("Missing EMD input")
-            return
-            
-        try:
-            #url = input.input_emd()
-            url = emd_id() # emd_url()
-            label = url.split("/")[-1].split(".")[0]
-            map_info = compute.MapInfo(
-                #url=url,
-                emd_id = input.input_emd(),
-                twist=twist(), 
-                rise=rise(), 
-                csym=csym(), 
-                label=label
-            )
-            maps.set([map_info])
-            print("Maps set successfully:", maps())
-        except Exception as e:
-            print("Error in get_map_from_url:", e)
+    @reactive.event(input.select_random_emdb)
+    def select_random_emdb_id():
+        req(input.input_mode_params() == "3")
+        rand_id = '0013'
+        ui.update_text('img_file_emd_id', value='emd-' + rand_id)
+    
+    @output
+    @render.ui
+    @reactive.event(msg_reactive)
+    def emdb_info_uis():
+        req(input.input_mode_params() == "3")
+        return ui.markdown(msg_reactive())
 
-    @reactive.effect
-    @reactive.event(maps)
-    def get_map_xyz_projections():
-        try:
-            if not maps() or len(maps()) == 0:
-                print("Maps is empty, cannot generate projections")
-                return
+    # @reactive.effect
+    # @reactive.event(input.input_mode_params, input.img_file_emd_id)
+    # def get_map_from_emd_id():
+    #     req(input.input_mode_params() == "3")
+    #     try:
+    #         map_info = compute.MapInfo(
+    #             emd_id = input.img_file_emd_id(),
+    #         )
+    #         input_data.set(map_info.data)
+    #         apix_from_file.set(map_info.apix)
+    #     except Exception as e:
+    #         print("Error in get_map_from_emd_d:", e)
+
+    # @reactive.effect
+    # @reactive.event(maps)
+    # def get_map_xyz_projections():
+    #     try:
+    #         if not maps() or len(maps()) == 0:
+    #             print("Maps is empty, cannot generate projections")
+    #             return
                 
-            map_xyz_projections.set([])
-            images = []
-            image_labels = []
-            apix_val = None
+    #         map_xyz_projections.set([])
+    #         images = []
+    #         image_labels = []
+    #         apix_val = None
             
-            map_xyz_projection_title.set(f"Map Y projections:")
-            # print("projection err 1")
-            with ui.Progress(min=0, max=len(maps())) as p:
-                p.set(message="Generating x/yz/ projections", detail="This may take a while ...")
-                # print("projection err 2")
-                for mi, m in enumerate(maps()):
-                    # print("M: : ", m)
-                    p.set(mi, message=f"{mi+1}/{len(maps())}: x/y/z projecting {m.label}")
-                    # print("projection err 3")
-                    try:
-                        tmp_images, tmp_image_labels, apix = compute.get_one_map_xyz_projects(map_info=m)
-                        # print("projection err 3.5")
-                        images += tmp_images
-                        image_labels += tmp_image_labels
+    #         map_xyz_projection_title.set(f"Map Y projections:")
+    #         # print("projection err 1")
+    #         with ui.Progress(min=0, max=len(maps())) as p:
+    #             p.set(message="Generating x/yz/ projections", detail="This may take a while ...")
+    #             # print("projection err 2")
+    #             for mi, m in enumerate(maps()):
+    #                 # print("M: : ", m)
+    #                 p.set(mi, message=f"{mi+1}/{len(maps())}: x/y/z projecting {m.label}")
+    #                 # print("projection err 3")
+    #                 try:
+    #                     tmp_images, tmp_image_labels, apix = compute.get_one_map_xyz_projects(map_info=m)
+    #                     # print("projection err 3.5")
+    #                     images += tmp_images
+    #                     image_labels += tmp_image_labels
 
-                        if apix_val is None:
-                            apix_val = apix
+    #                     if apix_val is None:
+    #                         apix_val = apix
                         
-                        # print(f"Generated {len(tmp_images)} projections for map {m.label}")
-                    except Exception as e:
-                        print(f"Error generating projections for map {m.label}:", e)
-                # print("projection err 4")
-                if images:
-                    map_xyz_projection_labels.set(image_labels)
-                    map_xyz_projections.set(images)
-                    # print(np.shape(images))
-                    # print(f"Set {len(images)} projections in total")
+    #                     # print(f"Generated {len(tmp_images)} projections for map {m.label}")
+    #                 except Exception as e:
+    #                     print(f"Error generating projections for map {m.label}:", e)
+    #             # print("projection err 4")
+    #             if images:
+    #                 map_xyz_projection_labels.set(image_labels)
+    #                 map_xyz_projections.set(images)
+    #                 # print(np.shape(images))
+    #                 # print(f"Set {len(images)} projections in total")
                 
-                selected_images.set(map_xyz_projections())
+    #             selected_images.set(map_xyz_projections())
                 
-                # Add this part to set apix value for EMD files
-                if apix_val is not None:
-                    apix_reactive.set(apix_val)
-                    apix_auto.set(apix_val)
-                    # Reset user inputs to force using auto values
-                    user_inputs.set({
-                        'apix': None,
-                        'angle': None,
-                        'dx': None,
-                        'dy': None,
-                        'mask_radius': None
-                    })
-                    # Force recalculation of auto parameters for EMD
-                    recalculate_emd_params.set(True)
-                # print("projection err 5")
-        except Exception as e:
-            print("Error in get_map_xyz_projections:", e)
+    #             # Add this part to set apix value for EMD files
+    #             if apix_val is not None:
+    #                 apix_from_file.set(apix_val)
+    #                 apix_auto.set(apix_val)
+    #                 # Reset user inputs to force using auto values
+    #                 user_inputs.set({
+    #                     'apix': None,
+    #                     'angle': None,
+    #                     'dx': None,
+    #                     'dy': None,
+    #                     'mask_radius': None
+    #                 })
+    #                 # Force recalculation of auto parameters for EMD
+    #                 recalculate_emd_params.set(True)
+    #             # print("projection err 5")
+    #     except Exception as e:
+    #         print("Error in get_map_xyz_projections:", e)
 
 
 
@@ -1230,316 +1101,349 @@ def server(input, output, session):
     @output
     @render.ui
     @reactive.event(input.apply_helical_sym)
-    def helical_sym_output():
-        value = input.apply_helical_sym()
-        # print("here")
-        if value:
-            # print("in val")
-            return ui.TagList(
-                    # HOW TO GET THE FOLLOWING SESSION STATE VALUES:
-                    ui.input_numeric("twist_ahs", "Twist (°):", value=1, min=-180.0, max=180.0, step=1.0),
-                    ui.input_numeric("rise_ahs", "Rise (Å):", value=4.75, min=0.0, step=1.0),
-                    ui.input_numeric("csym_ahs", "Csym:", value=1, min=1, step=1),
-                    ui.input_numeric("apix_map", "Current map pixel size (Å):", value=apix_auto(), min=0.0, step=1.0),
-                    ui.output_ui("update_apix_map_vals"),
-                    ui.hr(),
-            )
+    def apply_helical_sym_uis():
+        req(input.apply_helical_sym())
+        return [
+                ui.input_numeric("twist_ahs", "Twist (°):", value=twist(), min=-180.0, max=180.0, step=1.0),
+                ui.input_numeric("rise_ahs", "Rise (Å):", value=rise(), min=0.0, step=1.0),
+                ui.input_numeric("csym_ahs", "Csym:", value=input.csym(), min=1, step=1),
+                ui.input_numeric("apix_map", "Current map pixel size (Å):", value=apix_from_file(), min=0.0, step=1.0),
+                ui.input_numeric("apix_ahs", "New map pixel size (Å):", value=apix_from_file(), min=0.0, step=1.0),
+                ui.input_numeric("fraction_ahs","Center fraction (0-1):",value=1.0,min=0,max=1.0,step=0.1),
+                ui.input_numeric("length_ahs","Box length (Pixel):",value=max(nx(),nz()),min=0,step=1),
+                ui.input_numeric("width_ahs", "Box width (Pixel):", value=max(nx(),nz()), min=0, step=1),
+                ui.hr(),
+        ]
 
-    @output
-    @render.ui
-    @reactive.event(input.apix_map)
-    def update_apix_map_vals():
-        if nz()*input.apix_map() == 0:
-            return
+    # @output
+    # @render.ui
+    # @reactive.event(input.apix_map)
+    # def update_apix_map_vals():
+    #     if nz()*input.apix_map() == 0:
+    #         return
         
-        return ui.TagList(
-            ui.input_numeric("apix_ahs", "New map pixel size (Å):", value=input.apix_map(), min=0.0, step=1.0),
-            ui.input_numeric(
-                "fraction_ahs",
-                "Center fraction (0-1):",
-                value=1.0,
-                min=input.rise_ahs()/(nz()*input.apix_map()),
-                max=1.0,
-                step=0.1,
-            ),
-            ui.input_numeric(
-                "length_ahs",
-                "Box length (Å):",
-                value=input.apix_map()*max(nz(),nx()),
-                min=input.rise_ahs(),
-                step=1.0,
-            ),
-            ui.input_numeric("width_ahs", "Box width (Å):", value=input.apix_map()*nx(), min=0.0, step=1.0),
-        )
+    #     return [
+    #         ui.input_numeric("apix_ahs", "New map pixel size (Å):", value=input.apix_map(), min=0.0, step=1.0),
+    #         ui.input_numeric(
+    #             "fraction_ahs",
+    #             "Center fraction (0-1):",
+    #             value=1.0,
+    #             min=input.rise_ahs()/(nz()*input.apix_map()),
+    #             max=1.0,
+    #             step=0.1,
+    #         ),
+    #         ui.input_numeric(
+    #             "length_ahs",
+    #             "Box length (Å):",
+    #             value=input.apix_map()*max(nz(),nx()),
+    #             min=input.rise_ahs(),
+    #             step=1.0,
+    #         ),
+    #         ui.input_numeric("width_ahs", "Box width (Å):", value=input.apix_map()*nx(), min=0.0, step=1.0),
+    #     ]
 
 
     @reactive.effect
-    @reactive.event(data_all) # , input.ignore_blank)
-    def get_displayed_class_images():
-        if data_all() is not None:
-            data = data_all()
-            n = len(data)
-            images = [data[i] for i in range(n)]
-            image_size.set(max(images[0].shape))
+    @reactive.event(input_data, input.is_3d) # , input.ignore_blank)
+    def get_data_all_2d():
+        req(input_data() is not None)
+        req(not input.is_3d())
+        data = input_data()
+        n = len(data)
+        images = [data[i] for i in range(n)]
 
-            update_dimensions(images[0])
-
-            included = []
-            included_images = []
-            for i in range(n):
-                image = images[i]
-                if np.max(image) > np.min(image):
-                    included.append(i)
-                    included_images.append(image)
-            images = included_images
-            
-            image_labels = [f"Class {i+1}" for i in included]
-            displayed_class_labels.set(image_labels)
-            displayed_class_images.set(images)
-            
-            # Reset selected images when display changes
-            selected_images.set([])
-            selected_image_labels.set([])
+        included = []
+        included_images = []
+        for i in range(n):
+            image = images[i]
+            if np.max(image) > np.min(image):
+                included.append(i)
+                included_images.append(image)
+        images = included_images
+        
+        image_labels = [f"{i+1}" for i in included]
+        data_all_2d_labels.set(image_labels)
+        data_all_2d.set(images)
+        
+        # Reset selected images when display changes
+        selected_images.set([])
+        selected_image_labels.set([])
     
-    @output
-    @render.ui
-    def display_selected_images():
-        imgs = selected_images()
-        labels = selected_image_labels()
-        if len(imgs) > 0 and len(labels) > 0:
-            return shiny_test.image_gallery(
-                id="display_selected_image",
-                label="Selected classe(s):",
-                images=imgs,
-                image_labels=labels,
-                enable_selection=False,
-                allow_multiple_selection=False,
+    @reactive.effect
+    @reactive.event(input_data, input.is_3d) # , input.ignore_blank)
+    def get_data_all_2d_from_3d():
+        req(input_data() is not None)
+        req(not input.is_3d())
+        data = input_data()
+        n = len(data)
+        images = [data[i] for i in range(n)]
+
+        included = []
+        included_images = []
+        for i in range(n):
+            image = images[i]
+            if np.max(image) > np.min(image):
+                included.append(i)
+                included_images.append(image)
+        images = included_images
+        
+        image_labels = [f"{i+1}" for i in included]
+        data_all_2d_labels.set(image_labels)
+        data_all_2d.set(images)
+        
+        # Reset selected images when display changes
+        selected_images.set([])
+        selected_image_labels.set([])
+
+    @reactive.effect
+    @reactive.event(input.generate_2d_projection)
+    def update_all_images_from_3d_input_data():
+        req(input_data() is not None)
+        req(input.is_3d)
+        data_3d = input_data()
+        if input.apply_helical_sym():
+            print(f"Applying helical symmetry: twist={input.twist_ahs()}°, rise={input.rise_ahs()}Å, csym={input.csym_ahs()}, apix from {input.apix_map()}Å to {input.apix_ahs()}Å")
+            m = compute.symmetrize_transform_map(
+                data=data_3d,
+                apix=input.apix_map(),
+                twist_degree=input.twist_ahs(),
+                rise_angstrom=input.rise_ahs(),
+                csym=input.csym_ahs(),
+                new_size=(input.length_ahs(),input.width_ahs(), input.width_ahs()),
+                new_apix=input.apix_ahs(),
+                axial_rotation=input.az(),
+                tilt=input.tilt(),
             )
-        return ui.div("No images selected")
-    
-    
-    @output
+            print(np.shape(data_3d),np.shape(m))
+            ui.update_numeric('apix', value=input.apix_ahs())
+        else:
+            print(f"Applying rotation {input.az()}° and tilt {input.tilt()}° to the map")
+            m = helicon.transform_map(data_3d, rot=input.az(), tilt=input.tilt())
+
+        proj = np.transpose(m.sum(axis=-1))[:, ::-1]
+        proj = proj[np.newaxis, :, :]
+
+        def add_noise(image, noise, thres=1e-3):
+            sigma = np.std(image[image > thres])  # ignore background pixels
+            image += np.random.normal(scale=sigma * noise, size=image.shape)
+            return image
+
+        if input.gauss_noise_std() > 0:
+            proj[0, :, :] = add_noise(proj[0, :, :], input.gauss_noise_std())
+        proj[0, :, :] = helicon.transform_image(proj[0, :, :], rotation=90.0)
+
+        data_all_2d.set(proj)
+        data_all_2d_labels.set(["Projection"])
+        selected_images.set(proj)
+        selected_image_labels.set(["Projection"])
+        data_2d_transformed.set(proj[0])
+
+    #@output
     @render.ui
-    def dynamic_image_select_upload():
-        if len(displayed_class_images()) > 0:
-            return shiny_test.image_gallery(
-                id="select_classes",
-                label="Select class(es):",
-                images=displayed_class_images(),
-                image_labels=displayed_class_labels(),
-                image_size=128,
-                initial_selected_indices=initial_selected_image_indices(),
+    def input_image_selection_gallery():
+        if len(data_all_2d()) > 0:
+            _, ny, nx = np.shape(data_all_2d())
+            return helicon.shiny.image_gallery(
+                id="select_image",
+                label=reactive.value("Select a image:"),
+                images=data_all_2d,
+                image_labels=data_all_2d_labels,
+                image_size=image_display_size,
+                initial_selected_indices=initial_selected_image_indices,
                 enable_selection=True,
                 allow_multiple_selection=False,
             )
         return ui.div("No images available")
-    
-    @output
-    @render.ui
-    def dynamic_image_select_url():
-        if len(displayed_class_images()) > 0:
-            return shiny_test.image_gallery(
-                id="select_classes",
-                label="Select class(es):",
-                images=displayed_class_images(),
-                image_labels=displayed_class_labels(),
-                image_size=128,
-                initial_selected_indices=initial_selected_image_indices(),
-                enable_selection=True,
-                allow_multiple_selection=False,
-            )
-        return ui.div("No images available")
 
     @reactive.effect
-    @reactive.event(input.select_classes)
+    @reactive.event(input.select_image)
     def update_selected_images():
-        if input.select_classes() is not None:
-            selected = [displayed_class_images()[i] for i in input.select_classes()]
+        if input.select_image() is not None:
+            #selected = [data_all_2d()[i] for i in input.select_image()]
             selected_images.set(
-                [displayed_class_images()[i] for i in input.select_classes()]
+                [data_all_2d()[i] for i in input.select_image()]
             )
             selected_image_labels.set(
-                [displayed_class_labels()[i] for i in input.select_classes()]
+                [data_all_2d_labels()[i] for i in input.select_image()]
             )
-            if selected:
-                update_dimensions(selected[0])
 
-            data.set(selected[0])
+            mode = input.input_type() 
+
+            if mode in ["PS", "PD"]:
+                # angle_auto.set(0.0)
+                # dx_auto.set(0.0)
+                # dy_auto.set(0.0)
+                ui.update_numeric('angle', value=0.0)
+                ui.update_numeric('dx', value=0.0)
+                ui.update_numeric('dy', value=0.0)
+            else:
+                print("Estimating auto transformation parameters...")
+                ang_auto_v, dy_auto_v, diameter = helicon.estimate_helix_rotation_center_diameter(selected_images()[0], estimate_center=True, estimate_rotation=True)
+                # angle_auto.set(round(ang_auto_v+90,2))
+                # dy_auto.set(round(dy_auto_v*input.apix(),2))
+                # mask_radius_auto.set(round(diameter/2*input.apix(),2))
+                print("Estimated angle:", ang_auto_v+90)
+                print("input angle before:", input.angle())
+                ui.update_numeric('angle', value=round(ang_auto_v+90,2))
+                print("input angle after:", input.angle())
+                ui.update_numeric('dy', value=round(dy_auto_v*input.apix(),2))
+                ui.update_numeric('mask_radius', value=round(diameter/2*input.apix(),2))
+                mask_len_percent_auto_default = 90.0
+                if input.straightening():
+                    mask_len_percent_auto_default = 100.0
+                #mask_len_percent_auto.set(mask_len_percent_auto_default)
+                ui.update_numeric('mask_len', value=mask_len_percent_auto_default)
+            print(selected_images())
+            print("Auto transformation parameters set: angle=", input.angle())            
             
-
-    @reactive.Effect
-    @reactive.event(input.run)
-    def get_class2d():
+    @reactive.effect
+    @reactive.event(input.img_file_upload)
+    def get_images_from_input_2d_upload():
         if input.input_mode_params() == "1":
-            fileinfo = input.upload_classes()
+            print("Uploading image file...")
+            fileinfo = input.img_file_upload()
             if fileinfo is not None:
                 class_file = fileinfo[0]["datapath"]
                 try:
-                    data, apix = compute.get_class2d_from_file(class_file)
-                    #apix_reactive.set(apix)
-                    update_dimensions(data[0])
-                    #nx = data.shape[-1]
-                    image_size.set(nx)
-                    data_all.set(data)
-                    image_size.set(nx)
+                    data, apix, crs = compute.get_class2d_from_file(class_file)
+                    print(crs)
+                    nz_file, ny_file, nx_file = data.shape
+                    apix_from_file.set(apix)
+                    update_with_apix_from_file(apix)
+                    #update_dimensions(data)
+                    input_data.set(data)
+                    nx.set(nx_file)
+                    ny.set(ny_file)
+                    nz.set(nz_file)
+                    update_with_ny_nx(ny_file, nx_file)
                 except Exception as e:
                     print(e)
                     modal = ui.modal(
-                        f"Failed to read the uploaded 2D class average images from {fileinfo[0]['name']}",
+                        f"Failed to read the uploaded images from {fileinfo[0]['name']}",
                         title="File upload error",
                         easy_close=True,
                         footer=None
                     )
                     ui.modal_show(modal)
-        
-        elif input.input_mode_params() == "2" and input.url_params():
-            url = input.url_params()
+    
+    
+    @reactive.effect
+    @reactive.event(input.img_file_url)
+    def get_images_from_input_2d_url():
+        if input.input_mode_params() == "2":
+            print("Downloading image file from URL...")
+            url = input.img_file_url()
             try:
-                data, apix = compute.get_class2d_from_url(url)
-                #apix_reactive.set(apix)
-                update_dimensions(data[0])
-                #nx = data.shape[-1]
-                image_size.set(nx())
-                data_all.set(data)
-                image_size.set(nx())
+                data, apix, crs = compute.get_class2d_from_url(url)
+                print(crs)
+                nz_file, ny_file, nx_file = data.shape
+                apix_from_file.set(apix)
+                update_with_apix_from_file(apix)
+                #update_dimensions(data)
+                input_data.set(data)
+                nx.set(nx_file)
+                ny.set(ny_file)
+                nz.set(nz_file)
+                update_with_ny_nx(ny_file, nx_file)
             except Exception as e:
                 print(e)
                 modal = ui.modal(
-                    f"Failed to download 2D class average images from {url}",
+                    f"Failed to download images from {url}",
                     title="URL download error",
                     easy_close=True,
                     footer=None
                 )
                 ui.modal_show(modal)
 
+    @reactive.effect
+    @reactive.event(input.img_file_emd_id)
+    def get_images_from_input_emd():
+        return
+
+    def update_with_apix_from_file(apix):
+        ui.update_numeric('apix', value=apix)
+        ui.update_numeric('res_limit_x', value=round(3*apix_from_file(),4), min=2*apix_from_file())
+        ui.update_numeric('res_limit_y', value=round(2*apix_from_file(),4), min=2*apix_from_file())
+
+    # @reactive.Effect
+    # @reactive.event(input.is_3d)
+    # def get_data_2d():
+    #     if input.is_3d():
+    #         pass
+    #     else:
+    #         data_2d = selected_images()[0]
+    
     # functions for outputting graphs
     @render_plotly
-    @reactive.event(selected_images, apix_reactive)
-    def display_micrograph():
-        images = selected_images()
-        if not images:  # Check for None or empty list
-            return None # px.scatter(title="No image selected")
+    @reactive.event(selected_images, input.apix)
+    def display_selected_image():
+        req(len(selected_images())>0)
+        print("update display_selected_image:"+str(input.apix()))
 
         h, w = selected_images()[0].shape[:2]
-        nx.set(h)
-        ny.set(w)
-
-        # images = (selected_images()[0] - min(selected_images()[0])) / (max(selected_images()[0]) - min(selected_images()[0])) * 255
-        # fig = image_trace.plot_micrograph(
-        #     micrograph= np.array(images, dtype=np.uint8)# 255 - selected_images()[0],
-        #     title=f"Original image ({nx()}x{ny()})",
-        #     apix=apix_reactive(),
-        # )
+        # nx.set(h)
+        # ny.set(w)
+        # update_with_ny_nx(w, h)
 
         img = selected_images()[0]
 
-        # Normalize image to [0, 255]
-        img_min = np.min(img)
-        img_max = np.max(img)
-        normalized_img = (img - img_min) / (img_max - img_min) * 255
-        images = normalized_img.astype(np.uint8)
+        images = img
+        print("origin image to display: ", images.shape)
+        print("min image to display: ", np.min(images))
+        print("max image to display: ", np.max(images))
 
         # Plot the micrograph
-        fig = image_trace.plot_micrograph(
-            micrograph=255 - images,
+        fig = compute.plot_2d_class(
+            micrograph=images,
             title=f"Original image ({nx()}x{ny()})",
-            apix=apix_reactive(),
+            apix=input.apix(),
         )
-
-        def plot_micrograph_on_click(trace, points, selector):
-            if selector.shift == True:
-                first_point.set((points.xs[0], points.ys[0]))
-            else:
-                first_point.set(None)
-                second_point.set(None)
-
-        def plot_micrograph_on_hover(trace, points, selector):
-            if first_point() is None:
-                second_point.set(None)
-                return
-
-            if selector.shift == True:
-                second_point.set((points.xs[0], points.ys[0]))
-
-        for data in fig.data:
-            if data.name == "image":
-                data.on_click(plot_micrograph_on_click)
-                data.on_hover(plot_micrograph_on_hover)
 
         return fig
     
-
+    def update_with_ny_nx(ny_val, nx_val):
+        ui.update_numeric('pnx', min=min(ny_val, 128))
+        ui.update_numeric('pny', min=min(nx_val, 512))
+    
     @render_plotly
-    @reactive.event(data_transform, input.negate, apix_reactive)
-    def transformed_display_micrograph():
-        images = data_transform() # selected_images()
-        if data_transform() is None:
+    @reactive.event(data_2d_transformed)
+    def display_transformed_data():
+        req(data_2d_transformed() is not None)
+        images = data_2d_transformed() # selected_images()
+        if data_2d_transformed() is None:
             return None # px.scatter(title="No image selected")
 
-        # h, w = selected_images()[0].shape[:2]
-        h, w = data_transform().shape[:2]
-        nx.set(h)
-        ny.set(w)
+        h, w = data_2d_transformed().shape[:2]
+        #nx.set(h)
+        #ny.set(w)
 
-        # image_to_display = (
-        #     selected_images()[0] if input.negate() else 255 - selected_images()[0]
-        # )
-
-        img = data_transform()
-        img_min = np.min(img)
-        img_max = np.max(img)
-        normalized_img = (img - img_min) / (img_max - img_min) * 255
-        images = normalized_img.astype(np.uint8)
+        images = data_2d_transformed()
 
         image_to_display = (
-            255-images if input.negate() else images #selected_images()[0]
+            0-images if input.negate() else images #selected_images()[0]
         )
 
-        print("image to display: ", image_to_display.shape)
+        print("transformed image to display: ", image_to_display.shape)
         print("average image to display: ", np.average(image_to_display))
-        print("apix_reactive()", apix_reactive())
+        print("apix_from_file:", apix_from_file())
 
-        fig = image_trace.plot_micrograph(
-            micrograph= 255 - image_to_display, # image_to_display, #255 - selected_images()[0],
+        fig = compute.plot_2d_class(
+            micrograph= image_to_display, # image_to_display, #255 - selected_images()[0],
             title=f"Transformed image ({nx()}x{ny()})",
-            apix= apix_reactive(),
+            apix= input.apix(),
         )
-
-        def plot_micrograph_on_click(trace, points, selector):
-            if selector.shift == True:
-                first_point.set((points.xs[0], points.ys[0]))
-            else:
-                first_point.set(None)
-                second_point.set(None)
-
-        def plot_micrograph_on_hover(trace, points, selector):
-            if first_point() is None:
-                second_point.set(None)
-                return
-
-            if selector.shift == True:
-                second_point.set((points.xs[0], points.ys[0]))
-
-        for data in fig.data:
-            if data.name == "image":
-                data.on_click(plot_micrograph_on_click)
-                data.on_hover(plot_micrograph_on_hover)
 
         return fig
     
     @render_plotly
-    @reactive.event(selected_images, mask_radius_auto, apix_reactive)
-    def plot_graph():
-        images = selected_images()
-        if not images:
-            #print("No selected images!")
-            return None # px.scatter(title="No image selected")
+    @reactive.event(data_2d_transformed)
+    def plot_radial_profile():
+        req(data_2d_transformed() is not None)
         
-        data = selected_images()[0]
-        mask_radius = mask_radius_auto()
-        mask_len_fraction = input.mask_len() / 100.0
+        data = data_2d_transformed()
+        mask_radius = input.mask_radius()
         
-        x = np.arange(-nx() // 2, nx() // 2) * apix_reactive()
+        x = np.arange(-nx() // 2, nx() // 2) * input.apix()
         ymax = np.max(data, axis=0)
         ymean = np.mean(data, axis=0)
         
@@ -1564,7 +1468,7 @@ def server(input, output, session):
             yaxis_title="Pixel value",
             showlegend=True,
             legend=dict(x=0.9, y=1.1),
-            height=400,
+            #height=400,
             #width=250
             autosize=True,
             margin=dict(l=10, r=10, t=50, b=10),
@@ -1582,7 +1486,7 @@ def server(input, output, session):
     @reactive.Calc
     def acf_data():
         images = selected_images()
-        if not images:
+        if len(images)<=0:
             #print("No selected images!")
             return None, None, None
 
@@ -1595,19 +1499,16 @@ def server(input, output, session):
             return None, None, None
 
         ny = acf.shape[0]
-        y = np.arange(-ny // 2, ny // 2) * apix_reactive() 
+        y = np.arange(-ny // 2, ny // 2) * input.apix() 
         xmax = np.max(acf, axis=1)  
 
         return xmax, y, acf
 
 
     @render_plotly
-    @reactive.event(selected_images, apix_reactive)
+    @reactive.event(data_2d_transformed)
     def acf_plot():
-        images = selected_images()
-        if not images:
-            #print("No selected images!")
-            return
+        req(data_2d_transformed() is not None)
         xmax, y, acf = acf_data()
 
         if xmax is None or y is None:
@@ -1623,7 +1524,7 @@ def server(input, output, session):
             xaxis_title="Auto-correlation",
             yaxis_title="Axial Shift (Å)",
             showlegend=True,
-            height=400,
+            #height=400,
             #width=250,
             hovermode="x unified",
             autosize=True,
@@ -1646,120 +1547,6 @@ app = App(app_ui, server)
 
 
 ###########################
-
-def bessel_1st_peak_positions(n_max:int = 100):
-    #import numpy as np
-    ret = np.zeros(n_max+1, dtype=np.float32)
-    #from scipy.special import jnp_zeros
-    for i in range(1, n_max+1):
-        ret[i] = jnp_zeros(i, 1)[0]
-    return ret
-
-def bessel_n_image(ny, nx, nyquist_res_x, nyquist_res_y, radius, tilt):
-    #import numpy as np
-    table = bessel_1st_peak_positions()
-    
-    if tilt:
-        dsx = 1./(nyquist_res_x*nx//2)
-        dsy = 1./(nyquist_res_x*ny//2)
-        Y, X = np.meshgrid(np.arange(ny, dtype=np.float32)-ny//2, np.arange(nx, dtype=np.float32)-nx//2, indexing='ij')
-        Y = 2*np.pi * np.abs(Y)*dsy * radius
-        X = 2*np.pi * np.abs(X)*dsx * radius
-        Y /= np.cos(np.deg2rad(tilt))
-        X = np.hypot(X, Y*np.sin(np.deg2rad(tilt)))
-        X = np.expand_dims(X.flatten(), axis=-1)
-        indices = np.abs(table - X).argmin(axis=-1)
-        return np.reshape(indices, (ny, nx)).astype(np.int16)
-    else:
-        ds = 1./(nyquist_res_x*nx//2)
-        xs = 2*np.pi * np.abs(np.arange(nx)-nx//2)*ds * radius
-        xs = np.expand_dims(xs, axis=-1)
-        indices = np.abs(table - xs).argmin(axis=-1)
-        return np.tile(indices, (ny, 1)).astype(np.int16)
-
-def simulate_helix(twist, rise, csym, helical_radius, ball_radius, ny, nx, apix, tilt=0, az0=None):
-    def simulate_projection(centers, sigma, ny, nx, apix):
-        sigma2 = sigma*sigma
-        d = np.zeros((ny, nx))
-        Y, X = np.meshgrid(np.arange(0, ny, dtype=np.float32)-ny//2, np.arange(0, nx, dtype=np.float32)-nx//2, indexing='ij')
-        X *= apix
-        Y *= apix
-        for ci in range(len(centers)):
-            yc, xc = centers[ci]
-            x = X-xc
-            y = Y-yc
-            d += np.exp(-(x*x+y*y)/sigma2)
-        return d
-    def helical_unit_positions(twist, rise, csym, radius, height, tilt=0, az0=0):
-        imax = int(height/rise)
-        i0 = -imax
-        i1 = imax
-        
-        centers = np.zeros(((2*imax+1)*csym, 3), dtype=np.float32)
-        for i in range(i0, i1+1):
-            z = rise*i
-            for si in range(csym):
-                angle = np.deg2rad(twist*i + si*360./csym + az0 + 90)   # start from +y axis
-                x = np.cos(angle) * radius
-                y = np.sin(angle) * radius
-                centers[i*csym+si, 0] = x
-                centers[i*csym+si, 1] = y
-                centers[i*csym+si, 2] = z
-        if tilt:
-            #from scipy.spatial.transform import Rotation as R
-            rot = R.from_euler('x', tilt, degrees=True)
-            centers = rot.apply(centers)
-        centers = centers[:, [2, 0]]    # project along y
-        return centers
-    if az0 is None: az0 = np.random.uniform(0, 360)
-    centers = helical_unit_positions(twist, rise, csym, helical_radius, height=ny*apix, tilt=tilt, az0=az0)
-    projection = simulate_projection(centers, ball_radius, ny, nx, apix)
-    return projection
-
-def compute_layer_line_positions(twist, rise, csym, radius, tilt, cutoff_res, m_max=-1):
-    table = bessel_1st_peak_positions()/(2*np.pi*radius)
-
-    if m_max<1:
-        m_max = int(np.floor(np.abs(rise/cutoff_res)))+3
-    m = list(range(-m_max, m_max+1))
-    m.sort(key=lambda x: (abs(x), x))   # 0, -1, 1, -2, 2, ...
-    
-    smax = 1./cutoff_res
-
-    tf = 1./np.cos(np.deg2rad(tilt))
-    tf2 = np.sin(np.deg2rad(tilt))
-    m_groups = {} # one group per m order
-    for mi in range(len(m)):
-        d = {}
-        sy0 = m[mi] / rise
-
-        # first peak positions of each layer line
-        p = twist2pitch(twist, rise)
-        ds_p = 1/p
-        ll_i_top = int(np.abs(smax - sy0)/ds_p) * 2
-        ll_i_bottom = -int(np.abs(-smax - sy0)/ds_p) * 2
-        ll_i = np.array([i for i in range(ll_i_bottom, ll_i_top+1) if not i%csym], dtype=np.int32)
-        sy = sy0 + ll_i * ds_p
-        sx = table[np.clip(np.abs(ll_i), 0, len(table)-1)]
-        if tilt:
-            sy = np.array(sy, dtype=np.float32) * tf
-            sx = np.sqrt(np.power(np.array(sx, dtype=np.float32), 2) - np.power(sy*tf2, 2))
-            sx[np.isnan(sx)] = 1e-6
-        px  = list(sx) + list(-sx)
-        py  = list(sy) + list(sy)
-        n = list(ll_i) + list(ll_i)
-        d["LL"] = (px, py, n)
-        d["m"] = m
-
-        m_groups[m[mi]] = d
-    return m_groups
-
-def compute_phase_difference_across_meridian(phase):
-    # https://numpy.org/doc/stable/reference/generated/numpy.fft.fftfreq.html
-    phase_diff = phase * 0
-    phase_diff[..., 1:] = phase[..., 1:] - phase[..., 1:][..., ::-1]
-    phase_diff = np.rad2deg(np.arccos(np.cos(phase_diff)))   # set the range to [0, 180]. 0 -> even order, 180 - odd order
-    return phase_diff
 
 def resize_rescale_power_spectra(data, nyquist_res, cutoff_res=None, output_size=None, log=True, low_pass_fraction=0, high_pass_fraction=0, norm=1):
     #from scipy.ndimage import map_coordinates
@@ -1791,14 +1578,14 @@ def compute_power_spectra(data, apix, cutoff_res=None, output_size=None, log=Tru
 
 def fft_rescale(image, apix=1.0, cutoff_res=None, output_size=None):
     if cutoff_res:
-        cutoff_res_y, cutoff_res_x = cutoff_res
+        res_limit_y, cutoff_res_x = cutoff_res
     else:
-        cutoff_res_y, cutoff_res_x = 2*apix, 2*apix
+        res_limit_y, cutoff_res_x = 2*apix, 2*apix
     if output_size:
         ony, onx = output_size
     else:
         ony, onx = image.shape
-    freq_y = np.fft.fftfreq(ony) * 2*apix/cutoff_res_y
+    freq_y = np.fft.fftfreq(ony) * 2*apix/res_limit_y
     freq_x = np.fft.fftfreq(onx) * 2*apix/cutoff_res_x
     Y, X = np.meshgrid(freq_y, freq_x, indexing='ij')
     Y = (2*np.pi * Y).flatten(order='C')
@@ -1848,137 +1635,6 @@ def low_high_pass_filter(data, low_pass_fraction=0, high_pass_fraction=0):
         filter_hp = 1.0 - np.exp(- f2 * (X**2+Y**2))
         fft *= np.fft.fftshift(filter_hp)
     ret = np.abs(np.fft.ifft2(fft))
-    return ret
-
-def generate_tapering_filter(image_size, fraction_start=[0, 0], fraction_slope=0.1):
-    ny, nx = image_size
-    fy, fx = fraction_start
-    if not (0<fy<1 or 0<fx<1): return np.ones((ny, nx))
-    Y, X = np.meshgrid(np.arange(0, ny, dtype=np.float32)-ny//2, np.arange(0, nx, dtype=np.float32)-nx//2, indexing='ij')
-    filter = np.ones_like(Y)
-    if 0<fy<1:
-        Y = np.abs(Y / (ny//2))
-        inner = Y<fy
-        outer = Y>fy+fraction_slope
-        Y = (Y-fy)/fraction_slope
-        Y = (1. + np.cos(Y*np.pi))/2.0
-        Y[inner]=1
-        Y[outer]=0
-        filter *= Y
-    if 0<fx<1:
-        X = np.abs(X / (nx//2))
-        inner = X<fx
-        outer = X>fx+fraction_slope
-        X = (X-fx)/fraction_slope
-        X = (1. + np.cos(X*np.pi))/2.0
-        X[inner]=1
-        X[outer]=0
-        filter *= X
-    return filter
-
-def estimate_radial_range(data, thresh_ratio=0.1):
-    proj_y = np.sum(data, axis=0)
-    n = len(proj_y)
-    background = np.mean(proj_y[[0,1,2,-3,-2,-1]])
-    thresh = (proj_y.max() - background) * thresh_ratio + background
-    indices = np.nonzero(proj_y<thresh)[0]
-    try:
-        xmin = np.max(indices[indices<np.argmax(proj_y[:n//2])])
-    except:
-        xmin = 0
-    try:
-        xmax = np.min(indices[indices>np.argmax(proj_y[n//2:])+n//2])
-    except:
-        xmax = n-1
-    mask_radius = max(abs(n//2-xmin), abs(xmax-n//2))
-    proj_y -= thresh
-    proj_y[proj_y<0] = 0
-    def fitRadialProfile(x, radProfile):
-        a, b, w, rcore, rmax= x  # y = a*(sqrt(rmax^2-x^2)+(w-1)*sqrt(rcore^2-x^2))+b
-        try:
-            n = len(radProfile)
-            x = np.abs(np.arange(n, dtype=float)-n/2)
-            yshell = radProfile * 0
-            mask = x<=abs(rmax)
-            yshell[mask] = np.sqrt(rmax*rmax - x[mask]*x[mask])
-            ycore = radProfile * 0
-            mask = x<=abs(rcore)
-            ycore[mask] = np.sqrt(rcore*rcore - x[mask]*x[mask])
-            y = a*(yshell+(w-1)*ycore)+b
-            score = np.linalg.norm(y-radProfile)
-        except:
-            score = 1e10
-        return score
-    #from scipy.optimize import minimize
-    #from itertools import product
-    bounds = ((0, None), (None, None), (0, None), (0, mask_radius), (0, mask_radius))
-    vals_a = (1, 2, 4, 8)
-    vals_w = (0, 0.5)
-    vals_rcore = (0, mask_radius/2)
-    results = []
-    for val_a, val_w, val_rcore in product(vals_a, vals_w, vals_rcore):
-        x0 = (val_a, 0, val_w, val_rcore, mask_radius)
-        res = minimize(fitRadialProfile, x0, args=(proj_y,), method='Nelder-Mead', bounds=bounds, tol=1e-6)
-        a, b, w, rcore, rmax = res.x
-        results.append((res.fun, w, rcore, rmax, val_a, val_w, val_rcore))
-    result = sorted(results)[0]
-    w, rcore, rmax = result[1:4]
-    rmean = 0.5 * (rmax*rmax+(w-1)*rcore*rcore) / (rmax+(w-1)*rcore)
-    return float(rmean), float(mask_radius)    # pixel
-
-def auto_vertical_center(data, n_theta=180):
-  #from skimage.transform import radon
-  #from scipy.signal import correlate
-  
-  data_work = np.clip(data, 0, None)
-  
-  theta = np.linspace(start=0., stop=180., num=n_theta, endpoint=False)
-  #import warnings
-  with warnings.catch_warnings(): # ignore outside of circle warnings
-    warnings.simplefilter('ignore')
-    sinogram = radon(data_work, theta=theta)
-  sinogram += sinogram[::-1, :]
-  y = np.std(sinogram, axis=0)
-  theta_best = -theta[np.argmax(y)]
-
-  rotated_data = rotate_shift_image(data_work, angle=theta_best)
-  # now find best vertical shift
-  yproj = np.sum(rotated_data, axis=0)
-  yproj_xflip = yproj*1.0
-  yproj_xflip[1:] = yproj[1:][::-1]
-  corr = correlate(yproj, yproj_xflip, mode='same')
-  shift_best = -(np.argmax(corr) - len(corr)//2)/2
-
-  # refine to sub-degree, sub-pixel level
-  def score_rotation_shift(x):
-    theta, shift_x = x
-    data_tmp=rotate_shift_image(data_work, angle=theta, post_shift=(0, shift_x), order=1)
-    xproj = np.sum(data_tmp, axis=0)[1:]
-    xproj += xproj[::-1]
-    score = -np.std(xproj)
-    return score
-  #from scipy.optimize import fmin
-  res = fmin(score_rotation_shift, x0=(theta_best, shift_best), xtol=1e-2, disp=0)
-  theta_best, shift_best = res
-  return set_to_periodic_range(theta_best), shift_best
-
-def rotate_shift_image(data, angle=0, pre_shift=(0, 0), post_shift=(0, 0), rotation_center=None, order=1):
-    # pre_shift/rotation_center/post_shift: [y, x]
-    if angle==0 and pre_shift==[0,0] and post_shift==[0,0]: return data*1.0
-    ny, nx = data.shape
-    if rotation_center is None:
-        rotation_center = np.array((ny//2, nx//2), dtype=np.float32)
-    ang = np.deg2rad(angle)
-    m = np.array([[np.cos(ang), np.sin(ang)], [-np.sin(ang), np.cos(ang)]], dtype=np.float32)
-    pre_dy, pre_dx = pre_shift    
-    post_dy, post_dx = post_shift
-
-    offset = -np.dot(m, np.array([post_dy, post_dx], dtype=np.float32).T) # post_rotation shift
-    offset += np.array(rotation_center, dtype=np.float32).T - np.dot(m, np.array(rotation_center, dtype=np.float32).T)  # rotation around the specified center
-    offset += -np.array([pre_dy, pre_dx], dtype=np.float32).T     # pre-rotation shift
-
-    #from scipy.ndimage import affine_transform
-    ret = affine_transform(data, matrix=m, offset=offset, order=order, mode='constant')
     return ret
 
 def generate_projection(data, az=0, tilt=0, noise=0, output_size=None):
@@ -2131,622 +1787,4 @@ def guess_if_3d(filename, data=None):
     if nz==ny and nz==nx: return True
     if ny==nx and nz in [50, 100, 200]: return False
     return None
-
-def get_2d_image_from_uploaded_file(fileobj):
-    #import os, tempfile
-    #original_filename = fileobj.name
-    # data_all = mrcfile.open(fileobj, permissive=True).data
-    # map_crs_auto = None
-    # apix_auto = None
-
-    # if data_all is not None:
-    #     apix_auto = 1.0  # or whatever default value you want to use
-    #     map_crs_auto = data_all.copy()  # if you need a copy of the data
-    # original_filename = fileobj.name
-    if fileobj is None:
-        return 0, 0, 0
-    
-    original_filename = fileobj['name']
-    suffix = os.path.splitext(original_filename)[-1]
-    with tempfile.NamedTemporaryFile(suffix=suffix, delete=False) as temp:
-        with open(fileobj['datapath'], 'rb') as src:
-            temp.write(src.read())  # Copy content to temporary file
-        temp.flush()
-    data, map_crs, apix = get_2d_image_from_file(temp.name)
-
-    return data.astype(np.float32), map_crs, apix
-
-    # return data_all, map_crs_auto, apix_auto
-
-def get_emdb_ids():
-    try:
-        import_with_auto_install(["pandas"])
-        #import pandas as pd
-        entries_all = pd.read_csv('https://www.ebi.ac.uk/emdb/api/search/current_status:"REL"?rows=1000000&wt=csv&download=true&fl=emdb_id,structure_determination_method,resolution,image_reconstruction_helical_delta_z_value,image_reconstruction_helical_delta_phi_value,image_reconstruction_helical_axial_symmetry_details')
-        entries_all["emdb_id"] = entries_all["emdb_id"].str.split("-", expand=True).iloc[:, 1].astype(str)
-        emdb_ids_all = list(entries_all["emdb_id"])
-        methods = list(entries_all["structure_determination_method"])
-        resolutions = list(entries_all["resolution"])
-        emdb_helical = entries_all[entries_all["structure_determination_method"]=="helical"].rename(columns={"image_reconstruction_helical_delta_z_value": "rise", "image_reconstruction_helical_delta_phi_value": "twist", "image_reconstruction_helical_axial_symmetry_details": "csym"}).reset_index()
-        emdb_ids_helical = list(emdb_helical["emdb_id"])
-    except:
-        emdb_ids_all = []
-        methods = []
-        resolutions = []
-        emdb_helical = None
-        emdb_ids_helical = []
-        #st.warning("WARNING: failed to obtain the list of EMDB entries")
-    return emdb_ids_all, methods, resolutions, emdb_helical, emdb_ids_helical
-
-def get_emdb_helical_parameters(emd_id):
-    emdb_helical, emdb_ids_helical = get_emdb_ids()[-2:]
-    # print("emdb helical: ", emdb_helical)
-    # print("emdb_ids_helical: ", emdb_ids_helical)
-
-    if emdb_helical is not None and emd_id in emdb_ids_helical:
-        row_index = emdb_helical.index[emdb_helical["emdb_id"] == emd_id].tolist()[0]
-        row = emdb_helical.iloc[row_index]
-        ret = {}
-        try:
-            csym = int(row.csym[1:])
-        except: 
-            csym = 1
-            ret["csym_known"] = False
-        ret.update({"resolution":row.resolution, "twist":float(row.twist), "rise":float(row.rise), "csym":csym})
-    else:
-        ret = {}
-    return ret
-
-def get_emdb_map_url(emd_id: str):
-    #server = "https://files.wwpdb.org/pub"    # Rutgers University, USA
-    server = "https://ftp.ebi.ac.uk/pub/databases" # European Bioinformatics Institute, England
-    #server = "http://ftp.pdbj.org/pub" # Osaka University, Japan
-    url = f"{server}/emdb/structures/EMD-{emd_id}/map/emd_{emd_id}.map.gz"
-    return url
-
-def get_emdb_map(emd_id: str):
-    url = get_emdb_map_url(emd_id)
-    fileobj = download_file_from_url(url)
-    if fileobj is None:
-        #st.error(f"ERROR: EMD-{emd_id} map ({url}) could not be downloaded")
-        #st.stop()
-        @reactive.Effect
-        def show_error():
-            ui.output_text("error_message", f"ERROR: EMD-{emd_id} map ({url}) could not be downloaded")
-        raise Exception(f"EMD-{emd_id} map could not be downloaded")
-    #import mrcfile
-    with mrcfile.open(fileobj.name, mode='r') as mrc:
-        map_crs = [int(mrc.header.mapc), int(mrc.header.mapr), int(mrc.header.maps)]
-        vmin, vmax = np.min(mrc.data), np.max(mrc.data)
-        data = ((mrc.data - vmin) / (vmax - vmin))
-        apix = mrc.voxel_size.x.item()
-    return data.astype(np.float32), map_crs, apix
-
-def get_2d_image_from_url(url):
-    url_final = get_direct_url(url)    # convert cloud drive indirect url to direct url
-    fileobj = download_file_from_url(url_final)
-    if fileobj is None:
-        #st.error(f"ERROR: {url} could not be downloaded. If this url points to a cloud drive file, make sure the link is a direct download link instead of a link for preview")
-        #st.stop()
-        @reactive.Effect
-        def show_error():
-            ui.output_text(
-                "error_message",
-                (
-                    f"ERROR: {url} could not be downloaded. If this URL points to a cloud drive file, "
-                    "make sure the link is a direct download link instead of a link for preview."
-                ),
-            )
-        # Raise an exception to stop further processing
-        raise Exception("File download failed")
-    data = get_2d_image_from_file(fileobj.name)
-    return data
-
-def get_2d_image_from_file(filename):
-    try:
-        with mrcfile.open(filename, permissive=True) as mrc:
-            map_crs = [int(mrc.header.mapc), int(mrc.header.mapr), int(mrc.header.maps)]
-            data = mrc.data.astype(np.float32)
-            apix = mrc.voxel_size.x.item()
-    except Exception as e:
-        print(f"Error reading MRC file: {e}")
-        try:
-            from skimage.io import imread
-            data = imread(filename, as_gray=True) * 1.0
-            data = data[::-1, :]
-            apix = 1.0
-            map_crs = [1, 2, 3]
-        except Exception as e:
-            print(f"Error reading file as image: {e}")
-            raise ValueError("Unsupported file format or corrupted file.")
-    return data, map_crs, apix
-
-def download_file_from_url(url):
-    import tempfile
-    import requests
-    try:
-        filesize = get_file_size(url)
-        local_filename = url.split('/')[-1]
-        suffix = '.' + local_filename
-        fileobj = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
-        msg = f'Downloading {url}'
-        if filesize is not None:
-            msg += f" ({filesize/2**20:.1f} MB)"
-        """with st.spinner(msg):
-            with requests.get(url) as r:
-                r.raise_for_status()  # Check for request success
-                fileobj.write(r.content)"""
-        @reactive.Effect
-        def show_spinner():
-            ui.output_text("spinner_message", msg)
-
-        with requests.get(url) as r:
-            r.raise_for_status()  # Check for request success
-            fileobj.write(r.content)
-
-        return fileobj
-    except Exception as e:
-        return None
-
-def get_file_size(url):
-    import requests
-    response = requests.head(url)
-    if 'Content-Length' in response.headers:
-        file_size = int(response.headers['Content-Length'])
-        return file_size
-    else:
-        return None
-
-def change_mrc_map_crs_order(data, current_order, target_order=[1, 2, 3]):
-    if current_order == target_order: return data
-    map_crs_to_np_axes = {1:2, 2:1, 3:0}
-    current_np_axes_order = [map_crs_to_np_axes[int(i)] for i in current_order]
-    target_np_axes_order = [map_crs_to_np_axes[int(i)] for i in target_order]
-    import numpy as np
-    ret = np.moveaxis(data, current_np_axes_order, target_np_axes_order)
-    return ret
-
-def twist2pitch(twist, rise):
-    if twist:
-        return 360. * rise/abs(twist)
-    else:
-        return rise
-
-def pitch2twist(pitch, rise):
-    if pitch>rise:
-        return set_to_periodic_range(360. * rise/pitch)
-    else:
-        return 0.
-
-def encode_numpy(img, hflip=False, vflip=False):
-    if img.dtype != np.dtype('uint8'):
-        vmin, vmax = img.min(), img.max()
-        tmp = (255*(img-vmin)/(vmax-vmin)).astype(np.uint8)
-    else:
-        tmp = img
-    if hflip:
-        tmp = tmp[:, ::-1]
-    if vflip:
-        tmp = tmp[::-1, :]
-    #import io, base64
-    #from PIL import Image
-    pil_img = Image.fromarray(tmp)
-    buffer = io.BytesIO()
-    pil_img.save(buffer, format="JPEG")
-    encoded = base64.b64encode(buffer.getvalue()).decode()
-    return f"data:image/jpeg;base64, {encoded}"
-
-class Data:
-    def __init__(self, twist, rise, csym, diameter, rotate=None, dx=None, apix_or_nqyuist=None, url=None, input_type="image"):
-        self.input_type = input_type
-        self.twist = twist
-        self.rise = rise
-        self.csym = csym
-        self.diameter = diameter
-        self.rotate = rotate
-        self.dx = dx
-        if self.input_type in ["PS", "PD"]:
-            self.nyquist = apix_or_nqyuist
-        else:
-            self.apix = apix_or_nqyuist
-        self.url = url
-
-data_examples = [
-    Data(twist=29.40, rise=21.92, csym=6, diameter=138, url="https://tinyurl.com/y5tq9fqa"),
-    #Data(twist=36.0, rise=3.4, csym=1, diameter=20, dx=5, input_type="PS", apix_or_nqyuist=2.5, url="https://upload.wikimedia.org/wikipedia/en/b/b2/Photo_51_x-ray_diffraction_image.jpg")
-]
-
-def clear_twist_rise_csym_in_session_state():
-    #if "twist" in st.session_state: del st.session_state["twist"]
-    #if "rise" in st.session_state: del st.session_state["rise"]
-    #if "csym" in st.session_state: del st.session_state["csym"]
-    return
-
-int_types = {'apply_helical_sym_0':0, 'apply_helical_sym_1':0, 'csym':1, 'csym_ahs_0':1, 'csym_ahs_1':1, 'do_random_embid_0':0, 'do_random_embid_1':0, 'fft_top_only':0, 'image_index_0':0, 'image_index_1':0, 'input_mode_0':1, 'input_mode_1':1, 'is_3d_0':0, 'is_3d_1':0, 'm_0':1, 'm_1':1, 'm_max':3, 'negate_0':0, 'negate_1':0, 'pnx':512, 'pny':1024, 'show_LL':1, 'show_LL_text':1, 'show_phase_diff':1, 'show_pwr':1, 'show_yprofile':1, 'transpose_0':0, 'transpose_1':0, 'share_url':0, 'show_qr':0, 'useplotsize':0}
-float_types = {'angle_0':0, 'angle_1':0, 'apix_0':0, 'apix_1':0, 'apix_ahs_0':0, 'apix_ahs_1':0, 'apix_map_0':0, 'apix_map_1':0, 'apix_nyquist_0':0, 'apix_nyquist_1':0, 'az_0':0, 'az_1':0, 'ball_radius':0, 'cutoff_res_x':0, 'cutoff_res_y':0, 'diameter':0, 'dx_0':0, 'dx_1':0, 'dy_0':0, 'dy_1':0, 'fraction_ahs_0':0, 'fraction_ahs_1':0, 'length_ahs_0':0, 'length_ahs_1':0, 'mask_len_0':90, 'mask_len_1':90, 'mask_radius_0':0, 'mask_radius_1':0, 'noise_0':0, 'noise_1':0, 'resolution':0, 'rise':0, 'rise_ahs_0':0, 'rise_ahs_1':0, 'simuaz':0, 'simunoise':0, 'tilt':0, 'tilt_0':0, 'tilt_1':0, 'twist':0, 'twist_ahs_0':0, 'twist_ahs_1':0, 'width_ahs_0':0, 'width_ahs_1':1}
-other_types = {'const_image_color':'', 'emd_id_0':'', 'emd_id_1':'', 'input_type_0':'image', 'input_type_1':'image', 'll_colors':'lime cyan violet salmon silver', 'url_0':'', 'url_0':''}
-
-def get_direct_url(url):
-    #import re
-    if url.startswith("https://drive.google.com/file/d/"):
-        hash = url.split("/")[5]
-        return f"https://drive.google.com/uc?export=download&id={hash}"
-    elif url.startswith("https://app.box.com/s/"):
-        hash = url.split("/")[-1]
-        return f"https://app.box.com/shared/static/{hash}"
-    elif url.startswith("https://www.dropbox.com"):
-        if url.find("dl=1")!=-1: return url
-        elif url.find("dl=0")!=-1: return url.replace("dl=0", "dl=1")
-        else: return url+"?dl=1"
-    elif url.find("sharepoint.com")!=-1 and url.find("guestaccess.aspx")!=-1:
-        return url.replace("guestaccess.aspx", "download.aspx")
-    elif url.startswith("https://1drv.ms"):
-        #import base64
-        data_bytes64 = base64.b64encode(bytes(url, 'utf-8'))
-        data_bytes64_String = data_bytes64.decode('utf-8').replace('/','_').replace('+','-').rstrip("=")
-        return f"https://api.onedrive.com/v1.0/shares/u!{data_bytes64_String}/root/content"
-    else:
-        return url
-
-def set_to_periodic_range(v, min=-180, max=180):
-    if min <= v <= max: return v
-    #from math import fmod
-    tmp = fmod(v-min, max-min)
-    if tmp>=0: tmp+=min
-    else: tmp+=max
-    return tmp
-
-def mem_info():
-    import_with_auto_install(["psutil"])
-    #from psutil import virtual_memory
-    mem = virtual_memory()
-    mb = pow(2, 20)
-    return (mem.total/mb, mem.available/mb, mem.used/mb, mem.percent)
-
-def mem_quota():
-    fqdn = get_hostname()
-    if fqdn.find("heroku")!=-1:
-        return 512  # MB
-    username = get_username()
-    if username.find("appuser")!=-1:    # streamlit share
-        return 1024  # MB
-    available_mem = mem_info()[1]
-    return available_mem
-
-def mem_used():
-    import_with_auto_install(["psutil"])
-    #from psutil import Process
-    #from os import getpid
-    mem = Process(getpid()).memory_info().rss / 1024**2   # MB
-    return mem
-
-def host_uptime():
-    import_with_auto_install(["uptime"])
-    from uptime import uptime
-    t = uptime()
-    if t is None: t = 0
-    return t
-
-def get_username():
-    #from getpass import getuser
-    return getuser()
-
-def get_hostname():
-    #import socket
-    fqdn = socket.getfqdn()
-    return fqdn
-
-def is_hosted(return_host=False):
-    hosted = False
-    host = ""
-    fqdn = get_hostname()
-    if fqdn.find("heroku")!=-1:
-        hosted = True
-        host = "heroku"
-    username = get_username()
-    if username.find("appuser")!=-1:
-        hosted = True
-        host = "streamlit"
-    if not host:
-        host = "localhost"
-    if return_host:
-        return hosted, host
-    else:
-        return hosted
-
-def read_mrc_data(mrc):
-    # read mrc data
-    mrc_data = mrcfile.open(mrc, 'r+')
-    mrc_data.set_image_stack
-
-    v_size=mrc_data.voxel_size
-    nx=mrc_data.header['nx']
-    ny=mrc_data.header['ny']
-    nz=mrc_data.header['nz']
-    apix=v_size['x']
-
-    data=mrc_data.data
-    return data, nx, ny
-
-#@st.cache_data(persist='disk', show_spinner=False)
-def gen_filament_template(length, diameter, angle=0, center_offset=(0, 0), image_size=(1024, 1024), apix=1.0, order=5):
-    ny, nx = image_size
-    y = (np.arange(0, ny) - ny//2)*apix
-    x = (np.arange(0, nx) - nx//2)*apix
-    Y, X = np.meshgrid(y, x, indexing='ij')
-    # flattop gaussian: order>2
-    d = np.exp( -np.log(2)*(np.abs(np.power((Y)/(length/2), order))+np.abs(np.power((X)/(diameter/2), order))) )
-    if angle!=0:
-        #from skimage import transform
-        d = transform.rotate(image=d, angle=angle, center=(nx//2, ny//2))
-    if center_offset!=(0, 0):
-        #from skimage import transform
-        xform = transform.EuclideanTransform(
-            translation = (center_offset[0]/apix, center_offset[1]/apix)
-        )
-        d = transform.warp(d, xform.inverse)
-    return d
-
-#@st.cache_data(persist='disk', show_spinner=False)
-def pad_to_size(array, ny, nx):
-    h, w = array.shape
-    a = (ny - h) // 2
-    aa = ny - a - h
-    b = (nx - w) // 2
-    bb = nx - b - w
-    return np.pad(array, pad_width=((a, aa), (b, bb)), mode='constant')
-
-#@st.cache_data(persist='disk', show_spinner=False)
-def filament_transform_fft(image, filament_template, angle_step):
-    #import scipy.fft
-    #import skimage.transform
-    ny, nx = image.shape
-    fny, fnx = filament_template.shape
-    if ny != fny or nx != fnx:
-        pad = True
-    else:
-        pad = False
-    angles = np.arange(0, 180, angle_step)
-    res_cc = np.zeros(shape=(len(angles), ny, nx), dtype=np.float32)
-    res_ang = np.zeros(shape=(len(angles), ny, nx), dtype=np.float32)
-    image_fft = scipy.fft.rfft2(image)
-    for ai, angle in enumerate(angles):
-        template = transform.rotate(image=filament_template, angle=angle, center=(fnx//2, fny//2))
-        if pad:
-            template = pad_to_size(template, ny, nx)
-        template_fft = np.conj(scipy.fft.rfft2(template))
-        res_cc[ai] = scipy.fft.fftshift(scipy.fft.irfft2(image_fft * template_fft))
-    fft1d = scipy.fft.fft(res_cc, axis=0)
-    fft1d_abs = np.abs(fft1d)
-    ret_amp2f = fft1d_abs[1, :, :]/np.sum(fft1d_abs, axis=0)
-    ret_ang = np.rad2deg(np.angle(fft1d)[1, :, :])
-    ret_ang[ret_ang<0] += 360
-    return (ret_amp2f, ret_ang)
-
-#@st.cache_data(persist='disk', show_spinner=False)
-def sample_axis_dots(data, apix, nx, ny, r_filament_pixel, l_template_pixel, da, num_samples, lp_x, lp_y):
-    # fill in potential black backgrounds with helical boxer
-    #data_slice_median=np.median(data)
-    #for i in range(ny):
-    #    for j in range(nx):
-    #        if data[i,j]==0:
-    #            data[i,j]=data_slice_median
-    #        else:
-    #            break
-    #    for j in range(nx):
-    #        if data[i,-(j+1)]==0:
-    #            data[i,-(j+1)]=data_slice_median
-    #        else:
-    #            break
-    
-    if nx < 2 * 2 * r_filament_pixel:
-        data = pad_to_size(data, 2 * 2 * r_filament_pixel,ny)
-        nx = 2 * 2 * r_filament_pixel
-
-
-    # apply low pass filter
-    data_fft=fp.fftshift(fp.fft2(data))
-
-    #kernel = Gaussian2DKernel(lp_x,lp_y,0,x_size=nx,y_size=ny).array
-    kernel = gen_filament_template(length=lp_y, diameter=lp_x, image_size=(ny, nx), apix=apix, order=2)
-    max_k=np.max(kernel)
-    min_k=np.min(kernel)
-    kernel=(kernel-min_k)/(max_k-min_k)
-    kernel_shape=np.shape(kernel)
-
-    data_fft_filtered=np.multiply(data_fft,kernel)
-
-    data_filtered=fp.ifft2(fp.ifftshift(data_fft_filtered)).real
-
-    # normalize
-    #data_filtered=(data_filtered-np.mean(data_filtered))/np.std(data_filtered)
-    vmin = data_filtered.min()
-    vmax = data_filtered.max()
-    data_filtered = (vmax-data_filtered)/(vmax-vmin)
-    
-    diameter = 2*r_filament_pixel*apix
-    length = l_template_pixel
-
-    template_size = round(max(diameter, length)/apix*1.2)//2*2
-
-    filament_template = gen_filament_template(length=length, diameter=diameter, image_size=(np.min([template_size,ny]), np.min([template_size,nx])), apix=apix, order=2)
-    filament_transform_method = filament_transform_fft
-    cc, ang = filament_transform_method(image=data_filtered, filament_template=filament_template, angle_step=3)
-    cc_vmin = cc.min()
-    cc_vmax = cc.max()
-    cc = (cc_vmax-cc)/(cc_vmax-cc_vmin)
-    cc_template = np.repeat([np.mean(cc,axis=0)],repeats=length,axis=0)
-    cc, ang = filament_transform_method(image=cc, filament_template=cc_template, angle_step=da)
-
-    ####################################################################
-    # center point detection
-    dots=np.zeros(np.shape(data))
-    centers=cc.argmax(axis=1)
-
-    xs=[]
-    ys=[]
-    row_offset=int(ny/num_samples/2)
-    #num_samples=10
-    for i in range(row_offset,ny,int(ny/num_samples)):
-        xs.append(centers[i])
-        ys.append(i)
-    #xs.append(centers[-1])
-    #ys.append(ny-1)
-
-
-    xs=np.array(xs)
-    ys=np.array(ys)
-
-    return xs, ys
-
-def create_fit_spline_figure(data,xs,ys,new_xs,apix):
-    h, w = data.shape
-    xs = (np.array(xs)-w//2)*apix
-    new_xs = (np.array(new_xs)-w//2)*apix
-    ys = (np.array(ys)-h//2)*apix
-
-    aspect_ratio = w/h
-    tools = 'box_zoom,crosshair,pan,reset,save,wheel_zoom'
-    fig = figure(x_range=(-w//2*apix, (w//2-1)*apix), y_range=(-h//2*apix, (h//2-1)*apix), 
-        tools=tools, aspect_ratio=aspect_ratio)
-    fig.grid.visible = False
-    fig.axis.visible = False
-    fig.toolbar_location = None
-
-    source_data = ColumnDataSource(data=dict(image=[data], x=[-w//2*apix], y=[-h//2*apix], dw=[w*apix], dh=[h*apix]))
-    color_mapper = LinearColorMapper(palette='Greys256')    # Greys256, Viridis256
-    data = fig.image(source=source_data, image='image', color_mapper=color_mapper,
-                x='x', y='y', dw='dw', dh='dh'
-            )
-
-    # add hover tool only for the image
-    #from bokeh.models.tools import HoverTool, CrosshairTool
-    tooltips = [("x", "$xÅ"), ('y', '$yÅ'), ('val', '@image')]
-    image_hover = HoverTool(renderers=[data], tooltips=tooltips)
-    fig.add_tools(image_hover)
-    fig.hover[0].attachment="vertical"
-       
-    # Plot the line and points
-    source_points = ColumnDataSource(data=dict(xs=xs, ys=ys))
-    source_line = ColumnDataSource(data=dict(new_xs=new_xs, ys=ys))
-    fig.line('new_xs', 'ys', source=source_line, line_color="red")
-    fig.circle('xs', 'ys', source=source_points, color="red", size=5)
-    
-    return fig
-
-#@st.cache_data(persist='disk', show_spinner=False)
-def fit_spline(_disp_col,data,xs,ys,apix,display=False):
-    # fit spline
-    ny,nx=data.shape
-    
-    # for debugging interpolation
-    # st.write(xs)
-    # xs = np.array(xs) * 0 + nx//2
-    
-    tck = splrep(ys,xs,s=20)
-
-    new_xs = splev(ys,tck)
-    
-    if display:
-        def render_spline():
-            ui.output_text("spline_fit_msg", "Fitted spline:")
-            p = create_fit_spline_figure(data, xs, ys, new_xs, apix)
-            ui.output_plot("spline_fit_plot", p)
-
-        reactive.Effect(render_spline)
-    return new_xs,tck
-
-# test the straightening part by forcing using the center of a straight filament: works
-# TODO: check the nans in the output images
-#@st.cache_data(persist='disk', show_spinner=False)
-def filament_straighten(_disp_col,data,tck,new_xs,ys,r_filament_pixel_display,apix):
-    ny,nx=data.shape
-    # resample pixels
-    #st.info(tck)
-    y0=0
-    x0=splev(y0,tck)
-    for i in range(ny):
-        dxdy=splev(y0,tck,der=1)
-        orthog_dxdy=-(1.0/dxdy)
-        tangent_x0y0=lambda y: dxdy*y + (x0-dxdy*y0)
-        normal_x0y0=lambda y: orthog_dxdy*y + (x0-orthog_dxdy*y0)
-        rev_normal_x0y0=lambda x: (x+orthog_dxdy*y0-x0)/orthog_dxdy
-        #new_row_xs=np.arange(-int(nx/2),int(nx/2),1).T*np.abs(orthog_dxdy)/np.sqrt(1+orthog_dxdy*orthog_dxdy)+x0
-        new_row_xs = np.arange(-int(r_filament_pixel_display), int(r_filament_pixel_display), 1).T * np.abs(orthog_dxdy) / np.sqrt(
-            1 + orthog_dxdy * orthog_dxdy) + x0
-        new_row_ys=rev_normal_x0y0(new_row_xs)
-        y0=y0+np.sqrt((1-dxdy*dxdy))
-        #st.info(dxdy)
-        x0=splev(y0,tck)
-
-    # interpolate resampled pixles
-    x_coord=np.arange(0,nx,1)
-    y_coord=np.arange(0,ny,1)
-    interpol=RegularGridInterpolator((x_coord,y_coord),np.transpose(data),bounds_error=False,fill_value=0)
-
-    nx = 2*int(r_filament_pixel_display)
-
-    new_im=np.zeros((ny,nx))
-    y_init=0
-    x_init=splev(y_init,tck)
-    curr_y=y_init
-    curr_x=x_init
-
-    for row in range(0,ny):
-        dxdy=splev(curr_y,tck,der=1)
-        orthog_dxdy=-(1.0/dxdy)
-        #tangent_x0y0=lambda y: dxdy*y + (curr_x-dxdy*curr_y)
-        #normal_x0y0=lambda y: orthog_dxdy*y + (curr_x-orthog_dxdy*curr_y)
-        
-        # TODO: check 2536: RuntimeWarning: invalid value encountered in multiply (also 1671,1672 lines). Potentially related to the nans in the output
-        rev_normal_x0y0=lambda x: (x+orthog_dxdy*curr_y-curr_x)/orthog_dxdy
-        #new_row_xs=np.arange(-int(nx/2),int(nx/2),1).T*np.abs(orthog_dxdy)/np.sqrt(1+orthog_dxdy*orthog_dxdy)+curr_x
-        new_row_xs = np.arange(-int(r_filament_pixel_display), int(r_filament_pixel_display), 1).T * np.abs(orthog_dxdy) / np.sqrt(
-            1 + orthog_dxdy * orthog_dxdy) + curr_x
-        new_row_ys=rev_normal_x0y0(new_row_xs)
-        new_row_coords=np.vstack([new_row_xs,new_row_ys]).T
-        new_row=interpol(new_row_coords)
-        new_im[row,:]=new_row
-
-        curr_y=curr_y+np.sqrt((1-dxdy*dxdy))
-        curr_x=splev(curr_y,tck)
-
-    ## fill the zeros on the edge again
-    #data_slice_mean=np.median(data)
-    #for i in range(ny):
-    #    for j in range(nx):
-    #        if new_im[i,j]==0:
-    #            new_im[i,j]=data_slice_mean
-    #        else:
-    #            break
-    #    for j in range(nx):
-    #        if new_im[i,-(j+1)]==0:
-    #            new_im[i,-(j+1)]=data_slice_mean
-    #        else:
-    #            break
-    
-    # with _disp_col:
-    #    st.write("Straightened image:")
-    #    fig = create_image_figure(new_im, apix, apix, plot_width=nx, plot_height=ny, x_axis_label=None, y_axis_label=None, tooltips=None, show_axis=False, show_toolbar=False, crosshair_color="white")
-    #    st.bokeh_chart(fig, use_container_width=True)
-
-    return new_im
-
-
-
-
-
-#Helical Projection Helper Functions
-
-
-
-
-
-
-
-
-
-
-
-
 
