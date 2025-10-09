@@ -1,3 +1,5 @@
-shiny
-jupyter_bokeh
 helicon[shiny] @ git+https://github.com/jianglab/helicon
+jupyter_bokeh
+psutil
+shiny
+uptime
