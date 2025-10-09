@@ -3,12 +3,11 @@ import pandas as pd
 
 from shiny import App, reactive, render, ui
 
-from shinywidgets import output_widget, render_widget, render_plotly, bokeh_dependency
+from shinywidgets import output_widget, render_widget, bokeh_dependency
 import pandas as pd
 from shiny import reactive, req
 import compute
 import util
-import plotly.graph_objects as go
 
 from bokeh.plotting import figure
 from bokeh.layouts import gridplot, column, layout

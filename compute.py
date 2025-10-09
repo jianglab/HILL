@@ -8,7 +8,6 @@ memory = Memory(location=f"/tmp/{username}_joblib_cache", verbose=0)
 
 from shiny import reactive
 from shiny.express import ui, render, module, expressify
-import plotly.graph_objects as go
 import helicon
 from itertools import product
 
@@ -26,7 +25,6 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.special import jnp_zeros
 from scipy.optimize import minimize, fmin
 
-from streamlit_bokeh import streamlit_bokeh
 from bokeh.events import MouseMove, MouseEnter, DoubleTap
 from bokeh.io import export_png
 from bokeh.layouts import gridplot, column, layout
