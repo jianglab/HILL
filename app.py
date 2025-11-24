@@ -1,13 +1,15 @@
 import numpy as np
 import pandas as pd
 
+from scipy.interpolate import splrep, splev
+
 from shiny import App, reactive, render, ui
 
-from shinywidgets import output_widget, render_widget, bokeh_dependency
-import pandas as pd
+from shinywidgets import output_widget, render_widget, render_plotly, bokeh_dependency
 from shiny import reactive, req
 import compute
 import util
+import plotly.graph_objects as go
 
 from bokeh.plotting import figure
 from bokeh.layouts import gridplot, column, layout
@@ -15,11 +17,19 @@ from bokeh.events import MouseMove, MouseEnter, DoubleTap, MouseLeave, Tap
 from bokeh.models import Button, ColumnDataSource, CustomJS, Legend, Span, Spinner, Slider
 from bokeh.models.tools import CrosshairTool, HoverTool, PointDrawTool
 
+from ipywidgets import DOMWidget
 from jupyter_bokeh import BokehModel
 
-import pandas as pd
+from urllib.parse import parse_qs, urlencode
 
 import helicon
+
+# suppress the close() error in BokehModel in remove_on_change
+def _patched_bokehmodel_close(self) -> None:
+    DOMWidget.close(self)
+    if self._document is not None:
+        self._document.clear()
+BokehModel.close = _patched_bokehmodel_close
 
 def import_with_auto_install(packages, scope=locals()):
     import importlib, site, subprocess, sys
@@ -36,7 +46,6 @@ def import_with_auto_install(packages, scope=locals()):
             subprocess.check_call([sys.executable, '-m', 'pip', 'install', package_pip_name])
             importlib.reload(site)
             scope[package_import_name] = importlib.import_module(package_import_name)
-
 
 app_ui = ui.page_fluid(
     bokeh_dependency(),
@@ -137,9 +146,9 @@ app_ui = ui.page_fluid(
                 ),
                 ui.nav_panel("Parameters",
                     ui.layout_columns(
-                        ui.input_radio_buttons("use_twist_pitch", "Use twist/pitch:", choices=["Twist", "Pitch"], selected="Twist", inline=True),
+                        ui.input_radio_buttons("use_twist_pitch", "Keep twist/pitch when changing rise:", choices=["Twist", "Pitch"], selected="Twist", inline=True),
                         ui.input_numeric('csym', 'csym', value=6, min=1, step=1, update_on="blur"),
-                        ui.input_numeric('filament_diameter', 'Filament/tube diameter (Å)', value=69.0*2, min=1.0, max=1000.0, step=10.0, update_on="blur"),
+                        ui.input_numeric('filament_diameter', 'Filament/tube diameter (Å)', value=155.2, min=1.0, max=1000.0, step=10.0, update_on="blur"),
                         ui.input_numeric("out_of_plane_tilt", "Out-of-plane tilt (°)", value=0.0, min=-90.0, max=90.0, step=1.0, update_on="blur"),
                         ui.input_numeric('res_limit_x', 'Resolution limit - X (Å)', value=round(3*1.0,4), min=2*1.0, step=1.0, update_on="blur"),
                         ui.input_numeric("res_limit_y", "Resolution limit - Y (Å)", value=round(2*1.0,4), min=2*1.0, step=1.0, update_on="blur"),
@@ -265,12 +274,14 @@ app_ui = ui.page_fluid(
 
 def server(input, output, session):
     # used to be global variables, which causes syncing issues across sessions
-    #ny, nx = 200, 200 # Get the dimensions of the loaded image
     nx_curr_img = reactive.value(256)  # default value
     ny_curr_img = reactive.value(256)  # default value
     nz_curr_img = reactive.value(256)    # default value
     MAX_SIZE = 500 # temp value
 
+    curr_twist = 29.40
+    curr_rise = 21.92
+    curr_pitch = 268.41
 
     urls = {
         "empiar-10940_job010": (
@@ -289,68 +300,24 @@ def server(input, output, session):
     selected_image_labels = reactive.value([])
     image_display_size = reactive.value(128)
 
-    markers_straighten_x = reactive.value([])
-    markers_straighten_y = reactive.value([])
+    markers_straighten = reactive.value([])
 
-    apix_auto = reactive.value(0.0)
-    negate_auto = reactive.value(0.0)
-    angle_auto = reactive.value(0.0)
-    dx_auto = reactive.value(0.0)
-    dy_auto = reactive.value(0.0)
     mask_radius_auto = reactive.value(0.0)
     mask_len_percent_auto = reactive.value(0.0)
-    radius_auto = reactive.value(0.0)
-    auto_transformation_estimated = reactive.value(False)
 
-    apix_value = reactive.value(0.0)
-    angle_value = reactive.value(0.0)
-    dx_value = reactive.value(0.0)
-    dy_value = reactive.value(0.0)
-    mask_radius_value = reactive.value(0.0)
-    mask_len_value = reactive.value(0.0)
-
-    helical_radius = reactive.value(1)
-    m_max_auto_reactive = reactive.value(3)
-    twist = reactive.value(29.40)
-    min_pitch = reactive.value(0.0)
-    pitch = reactive.value(268.41)
-    rise = reactive.value(21.92)
-    min_rise = reactive.value(2.0)
-    max_rise = reactive.value(268.41)
-
-    is_3d_reactive = reactive.value(None)
-    data = reactive.value(None)
     data_2d_transformed = reactive.value(None)
     #data_2d_transformed_masked = reactive.value(None)
 
-    transform_params = reactive.Value(None)
-    change_image = reactive.value(0.0)
-    prev_dx_val = reactive.Value(-1.0)
-    curr_dx_val = reactive.Value(1.0)
-
-    key_emd_id = reactive.Value(None)
-    emd_id = reactive.value("")
-    csym = reactive.Value(None)
     max_map_size = reactive.Value(None)
     max_map_dim = reactive.Value(None)
     stop_map_size = reactive.Value(None)
 
-
-    emdb_df_original = reactive.value(None)
-    emdb_df = reactive.value(None)
-    emd_url = reactive.value("")
-    msg_reactive = reactive.value("")
-
-    maps = reactive.value([])
-    map_xyz_projections = reactive.value([])
-    map_xyz_projection_title = reactive.value("Map XYZ projections:")
-    map_xyz_projection_labels = reactive.value([])
-    map_xyz_projection_display_size = reactive.value(128)
-    recalculate_emd_params = reactive.Value(False)
+    emd_msg_reactive = reactive.value("")
 
     pwr_data = reactive.value(None)
     phase_data = reactive.value(None)
     pd_data = reactive.value(None)
+    inhibit_update = reactive.value(False)
 
     user_inputs = reactive.value({
         'apix': None,
@@ -441,6 +408,9 @@ def server(input, output, session):
         yaxis_visible=False, 
         tooltips=tooltips_pd
     )
+    # link behaviors
+    fig_pd.x_range = fig_ps.x_range
+    fig_pd.y_range = fig_ps.y_range
     figs.append(fig_pd)
     figs_image.append(fig_pd)
     figs_width += phase_diff_work.shape[-1]       
@@ -453,9 +423,6 @@ def server(input, output, session):
     #add_linked_crosshair_tool(figs_image, overlay=(crosshair_width, crosshair_height))
 
     # add layer lines
-    curr_twist = 29.40
-    curr_rise = 21.92
-    curr_pitch = 268.41
     fig_ellipses = []
     curr_m_groups = compute.compute_layer_line_positions(
             twist=29.40,
@@ -477,7 +444,7 @@ def server(input, output, session):
             width = np.mean(tmp_x[1:]-tmp_x[:-1])
             height = width/5
             for mi, m in enumerate(curr_m_groups.keys()):
-                print("processing m:", m)
+                #print("initial processing m:", m)
                 #if str(m) not in curr_ms: continue
                 x, y, bessel_order = curr_m_groups[m]["LL"]
                 if curr_ll_text:
@@ -509,16 +476,28 @@ def server(input, output, session):
     slider_rise = Slider(start=curr_rise/2, end=min(curr_pitch, curr_rise*2.0), value=curr_rise, step=min(curr_pitch, curr_rise*2.0)*0.001, title="Rise (Å)", width=slider_width)
     
     #https://stackoverflow.com/questions/11832914/how-to-round-to-at-most-2-decimal-places-if-necessary
+    # callback_spinner_rise_change_code = """
+    #     Shiny.setInputValue("rise", slider_rise.value, {priority: 'event'})
+    #     slider_rise.value = spinner_rise.value
+    # """
+    # callback_spinner_pitch_change_code = """
+    #     Shiny.setInputValue("pitch", slider_pitch.value, {priority: 'event'})
+    #     slider_pitch.value = spinner_pitch.value
+    # """
+    # callback_spinner_twist_change_code = """
+    #     Shiny.setInputValue("twist", slider_twist.value, {priority: 'event'})
+    #     slider_twist.value = spinner_twist.value
+    # """
     callback_spinner_rise_change_code = """
-        Shiny.setInputValue("rise", slider_rise.value, {priority: 'event'})
+        Shiny.setInputValue("rise", spinner_rise.value, {priority: 'event'})
         slider_rise.value = spinner_rise.value
     """
     callback_spinner_pitch_change_code = """
-        Shiny.setInputValue("pitch", slider_pitch.value, {priority: 'event'})
+        Shiny.setInputValue("pitch", spinner_pitch.value, {priority: 'event'})
         slider_pitch.value = spinner_pitch.value
     """
     callback_spinner_twist_change_code = """
-        Shiny.setInputValue("twist", slider_twist.value, {priority: 'event'})
+        Shiny.setInputValue("twist", spinner_twist.value, {priority: 'event'})
         slider_twist.value = spinner_twist.value
     """
     callback_spinner_twist_change = CustomJS(args=dict(spinner_twist=spinner_twist, spinner_pitch=spinner_pitch, spinner_rise=spinner_rise,slider_twist=slider_twist,slider_pitch=slider_pitch, slider_rise=slider_rise), code=callback_spinner_twist_change_code)
@@ -627,26 +606,195 @@ def server(input, output, session):
     figs_grid = layout(children=[[spinner_twist, spinner_pitch, spinner_rise],[slider_twist, slider_pitch, slider_rise], figs_row])
     main_plot_widget = BokehModel(figs_grid)
 
-    @reactive.effect
-    @reactive.event(input.twist)
-    def test_input_rise_update():
-        print("input.twist updated to:", input.twist())
-    @reactive.effect
-    @reactive.event(input.pitch)
-    def test_input_rise_update():
-        print("input.pitch updated to:", input.pitch())
-    @reactive.effect
-    @reactive.event(input.rise)
-    def test_input_rise_update():
-        print("input.rise updated to:", input.rise())
+    init_done = reactive.value(False)
+    @reactive.effect(priority=1000)  # high priority to run early
+    def _init_from_query_once():
+        from urllib.parse import parse_qs
+        if init_done():
+            return
+        init_done.set(True)  # ensure it only runs once
+
+        qs = session.clientdata.url_search()  # Starlette QueryParams
+        qp = {k: v[0] if len(v)==1 else v
+            for k, v in parse_qs(qs.lstrip("?")).items()}
+
+        
+        url_inhibit_update = qp.get("inhibit_update")
+        if url_inhibit_update is not None:
+            inhibit_update.set(bool(int(url_inhibit_update)))
+            #print("URL inhibit_update param:", url_inhibit_update)
+
+        url_init_selected_idx = qp.get("init_selected")
+        #print("URL init idx param:", url_init_selected_idx)
+        if url_init_selected_idx is not None:
+            try:
+                url_init_selected_idx = int(url_init_selected_idx)
+                initial_selected_image_indices.set([url_init_selected_idx])
+                #print("Initialized selection from URL:", url_init_selected_idx)
+            except ValueError:
+                pass
+
+        url_input_mode = qp.get("input_mode")
+        #print("URL mode param:", url_input_mode)
+        if url_input_mode is not None:
+            try:
+                ui.update_radio_buttons("input_mode_params",selected=url_input_mode)
+                #print("Initialized from URL:", url_input_mode)
+            except Exception as e:
+                pass
+
+        url_img_file_url = qp.get("img_file_url")
+        #print("URL data param:", url_img_file_url)
+        if url_img_file_url is not None:
+            try:
+                ui.update_text("img_file_url",value=url_img_file_url)
+                #print("Initialized data from URL:", url_img_file_url)
+            except Exception as e:
+                pass
+
+        url_input_type = qp.get("input_type")
+        #print("URL data type param:", url_input_type)
+        if url_input_type is not None:
+            try:
+                ui.update_radio_buttons("input_type",selected=url_input_type)
+                #print("Initialized from URL:", url_input_type)
+            except Exception as e:
+                pass
+
+        url_apix = qp.get("apix")
+        #print("URL apix param:", url_apix)
+        if url_apix is not None:
+            try:
+                curr_apix = float(url_apix)
+                #ui.update_numeric("apix", value=curr_apix)
+                apix_from_file.set(curr_apix)
+                update_with_apix_from_file(curr_apix)
+                #print("Initialized apix from URL:", curr_apix)
+            except ValueError:
+                pass
+
+        url_rot = qp.get("rotate")
+        #print("URL rotate param:", url_rot)
+        if url_rot is not None:
+            try:
+                curr_rot = float(url_rot)
+                ui.update_numeric("angle", value=curr_rot)
+                #print("Initialized rot from URL:", curr_rot)
+            except ValueError:
+                pass
+        
+        url_dx = qp.get("dx")
+        #print("URL dx param:", url_dx)
+        if url_dx is not None:
+            try:
+                curr_dx = float(url_dx)
+                ui.update_numeric("dx", value=curr_dx)
+                #print("Initialized dx from URL:", curr_dx)
+            except ValueError:
+                pass
+
+        url_dy = qp.get("dy")
+        #print("URL dy param:", url_dy)
+        if url_dy is not None:
+            try:
+                curr_dy = float(url_dy)
+                ui.update_numeric("dy", value=curr_dy)
+                #print("Initialized dy from URL:", curr_dy)
+            except ValueError:
+                pass
+
+        url_twist = qp.get("twist")
+        url_rise = qp.get("rise")
+        #print("URL twist param:", url_twist)
+        if url_twist is not None and url_rise is not None:
+            try:
+                curr_twist = float(url_twist)
+                curr_rise = float(url_rise)
+                ui.update_numeric("rise", value=curr_rise)
+                ui.update_numeric("twist", value=curr_twist)
+                #spinner_rise.value = curr_rise
+                #spinner_twist.value = curr_twist
+                #print("Initialized twist from URL:", curr_twist, spinner_twist, spinner_twist.value)
+            except ValueError:
+                pass
+
+        url_csym = qp.get("csym")
+        #print("URL csym param:", url_csym)
+        if url_csym is not None:
+            try:
+                curr_csym = int(url_csym)
+                ui.update_numeric("csym", value=curr_csym)
+                #print("Initialized csym from URL:", curr_csym)
+            except ValueError:
+                pass
+        
+        url_diameter = qp.get("filament_diameter")
+        #print("URL filament_diameter param:", url_diameter)
+        if url_diameter is not None:
+            try:
+                curr_diameter = float(url_diameter)
+                ui.update_numeric("filament_diameter", value=curr_diameter)
+                #print("Initialized filament_diameter from URL:", curr_diameter)
+            except ValueError:
+                pass
+        
+        url_log_amp = qp.get("log_amp")
+        #print("URL log_amp param:", url_log_amp)
+        if url_log_amp is not None:
+            try:
+                curr_log_amp = bool(int(url_log_amp))
+                ui.update_checkbox("log_amp", value=curr_log_amp)
+                #print("Initialized log_amp from URL:", curr_log_amp)
+            except ValueError:
+                pass
+        
+        url_show_PD = qp.get("PD")
+        #print("URL PD param:", url_show_PD)
+        if url_show_PD is not None:
+            try:
+                curr_show_PD = bool(int(url_show_PD))
+                ui.update_checkbox("PD", value=curr_show_PD)
+                #print("Initialized PD from URL:", curr_show_PD)
+            except ValueError:
+                pass
+
+        # import base64, gzip, io
+        # def decode_array_param(s: str) -> np.ndarray:
+        #     compressed = base64.urlsafe_b64decode(s.encode("ascii"))
+        #     raw = gzip.decompress(compressed)
+        #     buf = io.BytesIO(raw)
+        #     return np.load(buf, allow_pickle=False)
+        # url_data = qp.get("data")
+        # print("URL data param:", len(url_data))
+        # if url_data is not None:
+        #     try:
+        #         data_2d_transformed.set(decode_array_param(url_data))
+        #         print("Initialized data from URL, shape:", data_2d_transformed().shape)
+        #     except Exception as e:
+        #         pass
+
+    #print(curr_twist)
+
+    # @reactive.effect
+    # @reactive.event(input.twist, ignore_init=True)
+    # def test_input_rise_update():
+    #     print("input.twist updated to:", input.twist())
+    # @reactive.effect
+    # @reactive.event(input.pitch, ignore_init=True)
+    # def test_input_rise_update():
+    #     print("input.pitch updated to:", input.pitch())
+    # @reactive.effect
+    # @reactive.event(input.rise, ignore_init=True)
+    # def test_input_rise_update():
+    #     print("input.rise updated to:", input.rise())
 
     @reactive.effect
     @reactive.event(input.sidebar_navset)
     def main_page_tab_switch():
-        print(input.sidebar_navset())
+        #print(input.sidebar_navset())
         if input.sidebar_navset() == "Filament Straightening":
             ui.update_navset("main_tabs", selected="straighten_filament_tab")
-            print(input.apix())
+            #print(input.apix())
         else:
             ui.update_navset("main_tabs", selected="main_content_tab")
 
@@ -658,15 +806,17 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.m_max, ignore_init=True)
     def update_m_choices():
-        print("updating ms groups")
+        #print("updating ms groups")
         prev_selected_ms = input.ms()
         ms = [ str(m) for m in range(input.m_max(), -input.m_max()-1, -1)]
         ui.update_checkbox_group("ms", choices=ms, selected=prev_selected_ms)
 
     @reactive.effect
-    @reactive.event(input.m_max, input.filament_diameter, input.csym, input.out_of_plane_tilt, input.res_limit_y, input.ll_colors, input.LL, input.LLText, input.pnx, input.pny, ignore_init=True)
-    def update_layerlines_all():
-        print("updating plot sizes") # TODO: plot size updates only responses instantly here. Add a similar trigger for the frame size update
+    @reactive.event(input.m_max, input.filament_diameter, input.csym, input.out_of_plane_tilt, input.res_limit_x, input.res_limit_y, input.fft_top_only, input.ll_colors, input.LL, input.LLText, input.pnx, input.pny, ignore_init=True)
+    def update_layerline_figures_all():
+        #print("updating plot sizes") # TODO: plot size updates only responses instantly here. Add a similar trigger for the frame size update
+        #print("xy sizes:",input.pnx(), input.pny())
+        #print("filament diameter:", input.filament_diameter())
         fig_ps.frame_height = input.pny()
         fig_ps.frame_width = input.pnx()
         fig_yp.frame_height = input.pny()
@@ -678,6 +828,7 @@ def server(input, output, session):
                 if e in f.renderers:
                     f.renderers.remove(e)
         fig_ellipses.clear()
+        #print("twist:", input.twist(), "rise:", input.rise())
         if input.LL():
             curr_m_groups = compute.compute_layer_line_positions(
                 twist=input.twist(),
@@ -695,7 +846,7 @@ def server(input, output, session):
                 width = np.mean(tmp_x[1:]-tmp_x[:-1])
                 height = width/5
                 for mi, m in enumerate(curr_m_groups.keys()):
-                    print("reprocessing m:", m)
+                    #print("reprocessing m:", m)
                     #if str(m) not in curr_ms: continue
                     x, y, bessel_order = curr_m_groups[m]["LL"]
                     if input.LLText():
@@ -716,62 +867,8 @@ def server(input, output, session):
         callback_slider_pitch_change = CustomJS(args=dict(fig_ellipses=fig_ellipses, slider_twist=slider_twist,slider_pitch=slider_pitch, slider_rise=slider_rise, spinner_twist=spinner_twist,spinner_pitch=spinner_pitch, spinner_rise=spinner_rise), code=callback_slider_pitch_change_code)
         slider_pitch.js_on_change('value', callback_slider_pitch_change)
         slider_rise.js_on_change('value', callback_slider_rise_change)
-    
-    @reactive.effect
-    @reactive.event(input.const_image_color, input.Color)
-    def update_color_palette():
-        from bokeh.models.glyphs import Image as ImageGlyph
-        from bokeh.palettes import Viridis256, Greys256
-        if input.const_image_color() != "":
-            new_palette = tuple(input.const_image_color().split())
-        else:
-            if input.Color():
-                new_palette = Viridis256
-            else:
-                new_palette = Greys256
-        for f in figs_image:
-            for rend in f.renderers:
-                if getattr(rend, "glyph", None) and isinstance(rend.glyph, ImageGlyph):
-                    rend.glyph.color_mapper.palette = new_palette
-    
-    # @reactive.effect
-    # @reactive.event(input.pny, input.pnx)
-    # def update_plot_frame_sizes():
-    #     print("updating plot sizes")
-    #     fig_ps.frame_height = input.pny()
-    #     fig_ps.frame_width = input.pnx()
-    #     fig_yp.frame_height = input.pny()
-    #     fig_yp.frame_width = input.pnx()//2
-    #     fig_pd.frame_height = input.pny()
-    #     fig_pd.frame_width = input.pnx()
-    
-    @reactive.effect
-    @reactive.event(input.Phase)
-    def toggle_phase_hover():
-        ps_h = next(t for t in fig_ps.tools if isinstance(t, HoverTool))
-        pd_h = next(t for t in fig_pd.tools if isinstance(t, HoverTool))
-        if input.Phase():
-            ps_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Amp', '@image'), ("Phase", "@phase °")]
-            pd_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Phase Diff', '@image °'), ("Phase", "@phase °")]
-        else:
-            ps_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Amp', '@image')]
-            pd_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Phase Diff', '@image °')]            
-    
-    @reactive.effect
-    @reactive.event(input.filament_diameter, input.out_of_plane_tilt, input.res_limit_x, input.res_limit_y, input.fft_top_only, input.pnx, input.pny, ignore_init=True)
-    def update_figure_bessel():
-        # #ny, nx = figs[0].renderers[0].data_source.data['image'][0].shape
-        # ny, nx = np.shape(data_2d_transformed())
-        # bessel = compute.bessel_n_image(ny, nx, input.res_limit_x(), input.res_limit_y(), input.filament_diameter()/2.0, input.out_of_plane_tilt()).astype(np.int16)
-        # data_source_ps.data = {
-        #     **data_source_ps.data,
-        #     "bessel": [bessel],
-        # }
-        # data_source_pd.data = {
-        #     **data_source_pd.data,
-        #     "bessel": [bessel],
-        # }
-        print("update_figure_bessel")
+        
+        #print("update_figure_bessel")
         ny = input.pny()
         nx = input.pnx()
         dsy = 1/(ny//2*input.res_limit_y())
@@ -784,14 +881,13 @@ def server(input, output, session):
 
         bessel = compute.bessel_n_image(ny, nx, input.res_limit_x(), input.res_limit_y(), input.filament_diameter()/2.0, input.out_of_plane_tilt()).astype(np.int16)
 
-        # tools = 'box_zoom,pan,reset,save,wheel_zoom'
-        # fig = figure(title_location="below", frame_width=nx, frame_height=ny, 
-        #     x_axis_label=None, y_axis_label=None, x_range=x_range, y_range=y_range, tools=tools)
-        # fig.grid.visible = False
-        # fig.title.text = title
-        # fig.title.align = "center"
-        # fig.title.text_font_size = "20px"
-        # fig.yaxis.visible = yaxis_visible   # leaving yaxis on will make the crosshair x-position out of sync with other figures
+        #print("set x_range:", x_range, "y_range:", y_range)
+        for f in figs:
+            f.y_range.start = y_range[0]
+            f.y_range.end = y_range[1]
+        for f in figs_image:
+            f.x_range.start = x_range[0]
+            f.x_range.end = x_range[1]
 
         data_source_ps.data = {
             **data_source_ps.data,
@@ -810,13 +906,38 @@ def server(input, output, session):
             "bessel":[bessel]
         }
 
-        print("set x_range:", x_range, "y_range:", y_range)
-        for f in figs:
-            f.y_range.start = y_range[0]
-            f.y_range.end = y_range[1]
+        #inhibit_update.set(False)
+        #print("inhibit_update set to False after figure update")
+
+
+    @reactive.effect
+    @reactive.event(input.const_image_color, input.Color)
+    def update_color_palette():
+        from bokeh.models.glyphs import Image as ImageGlyph
+        from bokeh.palettes import Viridis256, Greys256
+        if input.const_image_color() != "":
+            new_palette = tuple(input.const_image_color().split())
+        else:
+            if input.Color():
+                new_palette = Viridis256
+            else:
+                new_palette = Greys256
         for f in figs_image:
-            f.x_range.start = x_range[0]
-            f.x_range.end = x_range[1]
+            for rend in f.renderers:
+                if getattr(rend, "glyph", None) and isinstance(rend.glyph, ImageGlyph):
+                    rend.glyph.color_mapper.palette = new_palette
+    
+    @reactive.effect
+    @reactive.event(input.Phase)
+    def toggle_phase_hover():
+        ps_h = next(t for t in fig_ps.tools if isinstance(t, HoverTool))
+        pd_h = next(t for t in fig_pd.tools if isinstance(t, HoverTool))
+        if input.Phase():
+            ps_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Amp', '@image'), ("Phase", "@phase °")]
+            pd_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Phase Diff', '@image °'), ("Phase", "@phase °")]
+        else:
+            ps_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Amp', '@image')]
+            pd_h.tooltips = [("Res r", "Å"), ('Res y', 'Å'), ('Res x', 'Å'), ('Jn', '@bessel'), ('Phase Diff', '@image °')]            
 
     @output
     @render.ui
@@ -847,16 +968,67 @@ def server(input, output, session):
     # straightening_draw_tool = PointDrawTool(renderers=fig_straighten.renderers, empty_value="black")
     # fig_straighten.add_tools(straightening_draw_tool)
     # fig_straighten.toolbar.active_tap = straightening_draw_tool
-    source = ColumnDataSource({
+    markers_data_source = ColumnDataSource({
         'x': [], 'y': []
     })
 
-    straighten_marker_renderer = fig_straighten.scatter(x='x', y='y', source=source, color='red', size=20)
+    straighten_marker_renderer = fig_straighten.scatter(x='x', y='y', source=markers_data_source, color='red', size=20)
 
     draw_tool = PointDrawTool(renderers=[straighten_marker_renderer], default_overrides={"color":"red", "size":20})
     fig_straighten.add_tools(draw_tool)
     fig_straighten.toolbar.active_tap = draw_tool
-    fig_straighten.js_on_event(Tap, CustomJS(code="console.log('straightening figure clicked')"))
+    # fig_straighten.js_on_event(Tap, CustomJS(code="console.log('straightening figure clicked')"))
+    
+    # --- 1) Spline data + renderer (built once) ---
+    spline_source = ColumnDataSource({"x": [], "y": []})
+    fig_straighten.line("x", "y", source=spline_source, line_width=3, line_color="red")
+
+    # --- 2) JS bridge: when points change (add/move/delete), notify Shiny ---
+    markers_data_source.js_on_change("data", CustomJS(args=dict(src=markers_data_source), code=r"""
+        const xs = src.data.x || [], ys = src.data.y || [];
+        const payload = { x: xs, y: ys, n: xs.length, ts: Date.now() };
+
+        function send(w) {
+            try { if (w && w.Shiny && w.Shiny.setInputValue) {
+            w.Shiny.setInputValue("straighten_pts", payload, {priority: "event"});
+            }} catch(e) {}
+        }
+        send(window);
+        //if (window.parent !== window) send(window.parent);
+        //if (window.top    !== window) send(window.top);
+    """))
+
+    # @reactive.effect
+    # @reactive.event(input.straighten_pts)
+    # def update_fitted_spline():
+    #     print(input.straighten_pts())
+
+
+    @reactive.effect
+    @reactive.event(input.straighten_pts)
+    def update_fitted_spline():
+        # triggered when the JS bridge sends new points
+        #print("entered spline update function")
+        if "straighten_pts" not in input:
+            return
+        payload = input.straighten_pts()  # dict: {x: [...], y: [...], n: int, ts: ...}
+        #print("curr payload:", payload)
+        xs = list(map(float, payload["x"]))
+        ys = list(map(float, payload["y"]))
+        #print(xs,ys)
+        
+        sorted_indices = np.argsort(ys)
+        xs = np.array(xs)[sorted_indices]
+        ys = np.array(ys)[sorted_indices]
+        #print(xs, ys)
+
+        # update spline
+        tck = compute.fit_spline(xs, ys)
+        if tck is not None:
+            spline_ys = np.linspace(ys[0], ys[-1], 1000)
+            spline_xs = splev(spline_ys,tck)
+            spline_source.data = {"x": list(spline_xs), "y": list(spline_ys)}
+            markers_straighten.set(tck)
 
 
     @render_widget
@@ -866,28 +1038,24 @@ def server(input, output, session):
     @reactive.effect
     @reactive.event(input.reset_markers)
     def clear_markers():
-        for m in fig_straighten:
-            fig_straighten.renderers.remove(m)
-        markers_straighten_x.set([])
-        markers_straighten_y.set([])
+        markers_straighten.set(None)
+        markers_data_source.data = {"x": [], "y": []}
+        spline_source.data = {"x": [], "y": []}
     
     @reactive.effect
     @reactive.event(input.straighten_run)
     def run_straightening():
-        print(markers_straighten_x(), markers_straighten_y())
-        sorted_indices = np.argsort(markers_straighten_y())
-        xs = np.array(markers_straighten_x())[sorted_indices]/input.apix()
-        ys = np.array(markers_straighten_y())[sorted_indices]/input.apix()
-        print(xs,ys)
-        new_xs, tck = compute.fit_spline(data_2d_transformed(), xs, ys, input.apix(), display=False)
-        data_2d_transformed.set(np.nan_to_num(compute.filament_straighten(None,data_2d_transformed(), tck, new_xs, ys, input.output_width_straighten()//2,input.apix()), 0.0))
+        req(markers_straighten is not None)
+        #print(markers_straighten())
+        tck = markers_straighten()
+        data_2d_transformed.set(np.nan_to_num(compute.filament_straighten(data_2d_transformed(), tck, input.output_width_straighten()//2), 0.0))
     
     @reactive.effect
     @reactive.event(input.sidebar_navset)
     def update_figure_get_markers_straighten():
         req(input.sidebar_navset() == "Filament Straightening")
         req(len(selected_images())>0)
-        print("update straightening figure")
+        #print("update straightening figure")
         
         curr_img = selected_images()[0]
 
@@ -910,58 +1078,6 @@ def server(input, output, session):
             "dw":[w*dx], 
             "dh":[h*dy]
         }
-        # img = data_2d_transformed()
-        # h, w = img.shape
-        # apix = input.apix()
-        # marker_r_angst = input.template_diameter_straighten()/2.0 * apix
-
-        # fig = striaghten_fig()
-        # if len(fig.data) > 0:
-        #     print("update straighten plot")
-        #     fig.update_traces(z=data_2d_transformed(),selector=dict(name="image_to_straighten"))
-        # else:
-        #     print("generating straighten plot")
-        #     fig.add_trace(
-        #         go.Heatmap(
-        #             name="image_to_straighten",
-        #             z=img,
-        #             x=np.arange(w) * apix,
-        #             y=np.arange(h) * apix,
-        #             colorscale="gray",
-        #             showscale=False,  # Removed colorbar
-        #             #reversescale=True, # Greys colorscale is white to black by default??? why?
-        #             hoverongaps=False,
-        #             hovertemplate=(
-        #                 "x: %{x:.1f} Å<br>"
-        #                 + "y: %{y:.1f} Å<br>"
-        #                 + "val: %{z:.1f}<br>"
-        #                 + "<extra></extra>"
-        #             ),
-        #         )
-        #     )
-        #     fig.add_trace(
-        #         go.Line(
-        #             name="fitted_spline",
-        #             x=[],
-        #             y=[],
-        #         ),
-        #     )
-        #     fig.update_layout(width=w, height=h)
-        #     fig.update_xaxes(showticklabels=False)
-        #     fig.update_yaxes(showticklabels=False, autorange="reversed")
-
-        #     def update_markers(trace,points,state):
-        #         click_x = points.xs[0]
-        #         click_y = points.ys[0]
-        #         markers_straighten_x.set(markers_straighten_x()+[click_x])
-        #         markers_straighten_y.set(markers_straighten_y()+[click_y])
-        #         fig.layout.shapes = list(fig.layout.shapes) + [dict(type='circle',x0=click_x-marker_r_angst, y0=click_y-marker_r_angst, x1=click_x+marker_r_angst, y1=click_y+marker_r_angst, line_color='red', name='markers')]
-
-            
-        #     fig.data[0].on_click(update_markers)
-        #     markers_straighten_x.set([])
-        #     markers_straighten_y.set([])
-        # return fig
     
     @render_widget
     def main_plots():
@@ -988,7 +1104,7 @@ def server(input, output, session):
     def toggle_layerline_visibility():
         #req(m_groups() is not None)
         selected_ms =[str(m) for m in input.ms()]
-        print("toggling m visibility:", selected_ms)
+        #print("toggling m visibility:", selected_ms)
         for ellipses in fig_ellipses:
             if str(ellipses.tags[0]) in selected_ms:
                 ellipses.visible = True
@@ -1000,14 +1116,20 @@ def server(input, output, session):
     @reactive.event(pwr_data)
     def update_figure_pwr_yp_data():
         req(pwr_data() is not None)
-        print("updating pwr data")
+        #print("updating pwr data")
         pwr_work = pwr_data()
         phase_work = phase_data()
-        data_source_ps.data = {
-            **data_source_ps.data,
-            "image": [np.asarray(pwr_work)],
-            "phase": [np.fmod(np.rad2deg(phase_work)+360, 360).astype(np.float16)]
-        }
+        if phase_work is None:
+            data_source_ps.data = {
+                **data_source_ps.data,
+                "image": [np.asarray(pwr_work)],
+            }
+        else:
+            data_source_ps.data = {
+                **data_source_ps.data,
+                "image": [np.asarray(pwr_work)],
+                "phase": [np.fmod(np.rad2deg(phase_work)+360, 360).astype(np.float16)]
+            }
         # dsy = 1/(input.pny()//2*input.res_limit_y())
         # if input.fft_top_only():
         #     y_range = (-(input.pny()//2 * 0.01)*dsy, (input.pny()//2-0.5)*dsy)
@@ -1034,7 +1156,7 @@ def server(input, output, session):
     @reactive.event(pd_data)
     def update_figure_pd_data():
         req(pd_data() is not None)
-        print("updating pd data")
+        #print("updating pd data")
         pd_work = pd_data()
         phase_work = phase_data()
         data_source_pd.data = {
@@ -1081,16 +1203,16 @@ def server(input, output, session):
                 ui.input_numeric(
                     "apix", 
                     "Pixel size (Å/pixel)", 
-                    #value=apix_from_file(),
-                    value=1.0,
+                    value=apix_from_file(),
+                    #value=1.0,
                     min=0.1, 
                     max=30.0, 
                     step=0.01,
                     update_on="blur"
                 ),
                 #ui.output_ui("add_transpose"),
-                ui.input_checkbox("negate", "Invert the image contrast", value=negate_auto()),
-                ui.input_checkbox("straightening", "Straighten the filament", value=False),
+                ui.input_checkbox("negate", "Invert the image contrast", value=False),
+                #ui.input_checkbox("straightening", "Straighten the filament", value=False),
                 ui.input_numeric(
                     "angle", 
                     "Rotate (°)", 
@@ -1103,7 +1225,7 @@ def server(input, output, session):
                 ui.input_numeric(
                     "dx", 
                     "Shift along X-dim (Å)", 
-                    value=dx_auto(),
+                    value=0.0,
                     min=-500.0, 
                     max=500.0, 
                     # min=-nx()*apix_from_file(), 
@@ -1114,7 +1236,7 @@ def server(input, output, session):
                 ui.input_numeric(
                     "dy", 
                     "Shift along Y-dim (Å)", 
-                    value=dy_auto(),
+                    value=0.0,
                     min=-500.0, 
                     max=500.0, 
                     # min=-ny()*apix_from_file(), 
@@ -1143,12 +1265,15 @@ def server(input, output, session):
                 ),
             ]
         elif value in ['PS', 'PD']:
+            #print(query_params())
+            #print(round(float(query_params()["apix"]),4))
             return [
                 ui.input_numeric(
                     "apix", 
-                    "Nyquist res (Å)", 
-                    #value=2*apix_from_file(),
-                    value=1.0,
+                    "Pixel Size (Å)", 
+                    #value=apix_from_file(),
+                    #value=1.0,
+                    value=(round(float(query_params()["apix"]),4) if "apix" in query_params() else apix_from_file()),
                     min=0.1, 
                     max=30.0, 
                     step=0.01,
@@ -1157,7 +1282,8 @@ def server(input, output, session):
                 ui.input_numeric(
                     "angle", 
                     "Rotate (°)", 
-                    value=0.0,
+                    #value=0.0,
+                    value=(round(float(query_params()["rotate"]),2) if "rotate" in query_params() else 0.0),
                     min=-180.0, 
                     max=180.0, 
                     step=1.0,
@@ -1166,7 +1292,8 @@ def server(input, output, session):
                 ui.input_numeric(
                     "dx", 
                     "Shift along X-dim (Å)", 
-                    value=0.0,
+                    #value=0.0,
+                    value=(round(float(query_params()["dx"]),2) if "dx" in query_params() else 0.0),
                     min=-nx_curr_img()*apix_from_file(), 
                     max=nx_curr_img()*apix_from_file(), 
                     step=1.0,
@@ -1175,7 +1302,8 @@ def server(input, output, session):
                 ui.input_numeric(
                     "dy", 
                     "Shift along Y-dim (Å)", 
-                    value=0.0,
+                    #value=0.0,
+                    value=(round(float(query_params()["dy"]),2) if "dy" in query_params() else 0.0),
                     min=-ny_curr_img()*apix_from_file(), 
                     max=ny_curr_img()*apix_from_file(), 
                     step=1.0,
@@ -1197,17 +1325,43 @@ def server(input, output, session):
         req(len(selected_images())>0)
         req(input.apix()!=0)
         #req(auto_transformation_estimated())
-        temp_transformed = selected_images()[0]
+        temp_transformed = selected_images()[0].astype(np.float64)
+        #print("applying 2d transformations...", temp_transformed)
         if (input.angle() or input.dx() or input.dy() or input.negate()):
-            temp_transformed = compute.transform_2d_filament(temp_transformed,input.angle(),input.dx(),input.dy(),input.negate(),input.apix())
-            if (input.mask_radius()>0.0 and input.mask_len()>0.0 and input.mask_len()<100.0):
-                temp_transformed = compute.mask_2d_filament(temp_transformed,input.mask_radius(), input.apix(), input.mask_len()/100.0)
+            temp_transformed = compute.transform_2d_image(temp_transformed,input.angle(),input.dx(),input.dy(),input.negate(),input.apix())
+        if (input.mask_radius()>0.0 and input.mask_len()>0.0 and input.mask_len()<=100.0):
+            temp_transformed = compute.mask_2d_filament(temp_transformed,input.mask_radius(), input.apix(), input.mask_len()/100.0)
+        
         data_2d_transformed.set(temp_transformed)
+
+        import io, gzip, base64
+        def encode_array_param(arr: np.ndarray) -> str:
+            buf = io.BytesIO()
+            np.save(buf, arr, allow_pickle=False)     # .npy bytes (contains dtype/shape)
+            compressed = gzip.compress(buf.getvalue())
+            return base64.urlsafe_b64encode(compressed).decode("ascii")
+        #print("data_2d_transformed_encoded:", encode_array_param(temp_transformed))
     
+    @reactive.effect
+    @reactive.event(selected_images, input.angle, input.dx, input.dy, input.apix)
+    def set_data_2d_transformed_ps_pd():
+        req(input.input_type() in ["PS", "PD"])
+        req(len(selected_images())>0)
+        req(input.apix()>0)
+        temp_transformed = selected_images()[0].astype(np.float64)
+        #print("applying 2d transformations for PS/PD...", temp_transformed)
+        if (input.angle() or input.dx() or input.dy()):
+            temp_transformed = compute.transform_2d_image(temp_transformed,input.angle(),input.dx(),input.dy(),False, input.apix())
+        
+        data_2d_transformed.set(temp_transformed)
+
     @reactive.effect
     @reactive.event(data_2d_transformed)
     def set_mask_radius_auto():
-        req(data_2d_transformed() is not None) 
+        req(data_2d_transformed() is not None)
+        if inhibit_update():
+            #print("radius update inhibited")
+            return
         input_type = input.input_type()
         if input_type in ["Image"]:
             radius_auto_v, _ = compute.estimate_radial_range(data_2d_transformed(), thresh_ratio=0.1)
@@ -1215,16 +1369,22 @@ def server(input, output, session):
             ui.update_numeric('filament_diameter', value=round(radius_auto_v*input.apix()*2,2))
     
     @reactive.effect
-    def get_ps_pd_data():
+    def set_ps_pd_data():
         req(data_2d_transformed() is not None)
         req(input.apix()>0)
         req(input.res_limit_y()>0)
         req(input.res_limit_x()>0)
-        pwr, phase = compute.compute_power_spectra(data_2d_transformed(), apix=input.apix(), cutoff_res=(input.res_limit_y(), input.res_limit_x()), 
-                output_size=(input.pny(), input.pnx()), log=input.log_amp(), low_pass_fraction=input.lp_fraction()/100.0, high_pass_fraction=input.hp_fraction()/100.0)
-        phase_data.set(phase) # update order important? maybe think of a better implementation to update figures
-        pwr_data.set(pwr)
-        pd_data.set(compute.compute_phase_difference_across_meridian(phase))
+        if input.input_type() == "Image":
+            pwr, phase = compute.compute_power_spectra(data_2d_transformed(), apix=input.apix(), cutoff_res=(input.res_limit_y(), input.res_limit_x()), 
+                    output_size=(input.pny(), input.pnx()), log=input.log_amp(), low_pass_fraction=input.lp_fraction()/100.0, high_pass_fraction=input.hp_fraction()/100.0)
+            phase_data.set(phase) # update order important? maybe think of a better implementation to update figures
+            pwr_data.set(pwr)
+            pd_data.set(compute.compute_phase_difference_across_meridian(phase))
+        elif input.input_type() == "PS":
+            #print("computing resized power spectra for PS input")
+            pwr_data.set(compute.resize_rescale_power_spectra(data_2d_transformed(),nyquist_res=input.apix()*2, cutoff_res=(input.res_limit_y(), input.res_limit_x()), output_size=(input.pny(), input.pnx()), log=input.log_amp(), low_pass_fraction=input.lp_fraction()/100.0, high_pass_fraction=input.hp_fraction()/100.0, norm=1))
+        elif input.input_type() == "PD":
+            pd_data.set(compute.resize_rescale_power_spectra(data_2d_transformed(),nyquist_res=input.apix()*2, cutoff_res=(input.res_limit_y(), input.res_limit_x()), output_size=(input.pny(), input.pnx()), log=0, low_pass_fraction=0, high_pass_fraction=0, norm=1))
     
     @output
     @render.ui
@@ -1258,6 +1418,7 @@ def server(input, output, session):
                     #ui.output_ui("get_link_emd"),
                     #ui.p("You have selected to use an EMD file. Please enter the EMD accession number (e.g., EMD-xxxxx)."),
                     ui.input_action_button("select_random_emdb", "Select a random EMDB ID", value=False),
+                    ui.output_ui("emdb_info_uis"),
                     ui.input_checkbox("is_3d", "The input is a 3D map", value=True),
             ]
         else:
@@ -1290,52 +1451,33 @@ def server(input, output, session):
         if max_map_size()>0:
             warning_map_size = f"Due to the resource limit, the maximal map size should be {max_map_dim}x{max_map_dim}x{max_map_dim} voxels or less to avoid crashing the server process"
     
-    #@output
-    @render.ui
-    @reactive.event (input.input_mode_params, input.img_file_emd_id)
+    @reactive.effect
+    @reactive.event(input.input_mode_params, input.img_file_emd_id)
     def get_link_emd():
         req(input.input_mode_params() == "3")
         req(input.img_file_emd_id())
         emdb = helicon.dataset.EMDB()
-        emd_ids = emdb.helical_structure_ids()
-        print(emd_ids)
-        return len(emd_ids)
+        df = emdb.meta.loc[emdb.meta["emd_id"].isin(emdb.helical_structure_ids())]
+        current_entry = df[df["emd_id"]==input.img_file_emd_id().split('-')[-1]]
+        #print(current_entry)
+        if not current_entry.empty:
+            current_entry["resolution"] = current_entry["resolution"].astype(float).round(3)
+            current_entry["twist"] = current_entry["twist"].astype(float).round(3)
+            current_entry["rise"] = current_entry["rise"].astype(float).round(3)
 
-        # emdb_ids_all, methods, resolutions, _, emdb_ids_helical = util.get_emdb_ids()
-        # url = "https://www.ebi.ac.uk/emdb/search/*%20AND%20structure_determination_method:%22helical%22?rows=10&sort=release_date%20desc"
-        # if emdb_ids_helical is None:
-        #     return
-        # msg = ""
+            msg = f'[{input.img_file_emd_id()}](https://www.ebi.ac.uk/emdb/entry/{input.img_file_emd_id()})'
+            msg += f' | resolution={current_entry["resolution"].values[0]}Å | twist={current_entry["twist"].values[0]}° | rise={current_entry["rise"].values[0]}Å | axial sym={current_entry["csym"].values[0]}'
 
-        # selected_id = str(10499) # str(random.choice(arr))
-        # # key_emd_id.set('emd-' + selected_id) # random.choice(emdb_ids_helical))
+            ui.update_numeric('rise',value=current_entry["rise"].values[0])
+            ui.update_numeric('twist',value=current_entry["twist"].values[0])
+            ui.update_numeric('csym',value=int(current_entry["csym"].values[0].split('C')[-1]))
+            spinner_rise.value = current_entry["rise"].values[0]
+            spinner_twist.value = current_entry["twist"].values[0]
+            url = "https://github.com/jianglab/EMDB_helical_parameter_validation/blob/main/EMDB_validation.csv"
+            emd_msg_reactive.set(msg + f'<br>[All {len(df)} helical structures in EMDB]({url})')
+        else:
+            emd_msg_reactive.set(f"{input.img_file_emd_id()} is not a valid helical structure in EMDB.")
 
-        # id = input.img_file_emd_id().lower().split("emd-")[-1]
-        
-        # if id != selected_id:
-        #     emd_id.set(id)
-        # elif not key_emd_id():
-        #     selected_id = str(10499) # str(random.choice(arr))
-        #     key_emd_id.set('emd-' + selected_id)
-        #     emd_id.set(key_emd_id().lower().split("emd-")[-1])
-
-        #     msg = f'[EMD-{emd_id()}](https://www.ebi.ac.uk/emdb/entry/EMD-{emd_id()})'
-        #     emd_url.set(msg)
-        #     resolution = resolutions[emdb_ids_all.index(emd_id())]
-        #     msg += f' | resolution={resolution}Å'
-        #     params = util.get_emdb_helical_parameters(emd_id())
-
-        #     if params and ("twist" in params and "rise" in params and "csym" in params):           
-        #         msg += f"  \ntwist={params['twist']}° | rise={params['rise']}Å"
-        #         if params.get("csym_known", True): msg += f" | c{params['csym']}"
-        #         else: msg += " | csym n/a"
-        #         rise.set(params['rise'])
-        #         twist.set(params['twist'])
-        #         pitch.set(compute.twist2pitch(twist=twist(), rise=rise()))
-        #         csym.set(params['csym'])
-        #     else:
-        #         msg +=  "  \n*helical params not available*"
-        #     msg_reactive.set(msg + f'\n[All {len(emdb_ids_helical)} helical structures in EMDB]({url})')
 
     @reactive.effect
     @reactive.event(input.select_random_emdb)
@@ -1349,23 +1491,10 @@ def server(input, output, session):
 
     @output
     @render.ui
-    @reactive.event(msg_reactive)
+    @reactive.event(emd_msg_reactive)
     def emdb_info_uis():
         req(input.input_mode_params() == "3")
-        return ui.markdown(msg_reactive())
-
-    # @reactive.effect
-    # @reactive.event(input.input_mode_params, input.img_file_emd_id)
-    # def get_map_from_emd_id():
-    #     req(input.input_mode_params() == "3")
-    #     try:
-    #         map_info = compute.MapInfo(
-    #             emd_id = input.img_file_emd_id(),
-    #         )
-    #         input_data.set(map_info.data)
-    #         apix_from_file.set(map_info.apix)
-    #     except Exception as e:
-    #         print("Error in get_map_from_emd_d:", e)
+        return ui.markdown(emd_msg_reactive())
 
     @output
     @render.ui
@@ -1427,7 +1556,7 @@ def server(input, output, session):
         req(input.is_3d)
         data_3d = input_data()
         if input.apply_helical_sym():
-            print(f"Applying helical symmetry: twist={input.twist_ahs()}°, rise={input.rise_ahs()}Å, csym={input.csym_ahs()}, apix from {input.apix_map()}Å to {input.apix_ahs()}Å")
+            #print(f"Applying helical symmetry: twist={input.twist_ahs()}°, rise={input.rise_ahs()}Å, csym={input.csym_ahs()}, apix from {input.apix_map()}Å to {input.apix_ahs()}Å")
             m = compute.symmetrize_transform_map(
                 data=data_3d,
                 apix=input.apix_map(),
@@ -1439,10 +1568,10 @@ def server(input, output, session):
                 axial_rotation=input.az(),
                 tilt=input.tilt(),
             )
-            print(np.shape(data_3d),np.shape(m))
+            #print(np.shape(data_3d),np.shape(m))
             ui.update_numeric('apix', value=input.apix_ahs())
         else:
-            print(f"Applying rotation {input.az()}° and tilt {input.tilt()}° to the map")
+            #print(f"Applying rotation {input.az()}° and tilt {input.tilt()}° to the map")
             m = helicon.transform_map(data_3d, rot=input.az(), tilt=input.tilt())
 
         proj = np.transpose(m.sum(axis=-1))[:, ::-1]
@@ -1456,19 +1585,21 @@ def server(input, output, session):
         if input.gauss_noise_std() > 0:
             proj[0, :, :] = add_noise(proj[0, :, :], input.gauss_noise_std())
         proj[0, :, :] = helicon.transform_image(proj[0, :, :], rotation=90.0)
-        
-        #auto_transformation_estimated.set(False)
+
+        nz, ny, nx = np.shape(proj)
+        #print("projection:", nz, ny, nx)
+        nz_curr_img.set(nz)
+        ny_curr_img.set(ny)
+        nx_curr_img.set(nx)
+        #update_with_ny_nx(ny, nx)
+        ui.update_numeric('pnx', min=min(ny, 128))
+        ui.update_numeric('pny', min=min(nx, 512))
+
         data_all_2d.set(proj)
         data_all_2d_labels.set(["Projection"])
         selected_images.set(proj)
         selected_image_labels.set(["Projection"])
         data_2d_transformed.set(proj[0])
-        # ui.update_numeric('angle', value=0.0)
-        # ui.update_numeric('dx', value=0.0)
-        # ui.update_numeric('dy', value=0.0)
-        # ui.update_numeric('mask_radius', value=0.0)
-        # ui.update_numeric('mask_len', value=100.0)
-        #auto_transformation_estimated.set(True)
 
     #@output
     @render.ui
@@ -1491,8 +1622,6 @@ def server(input, output, session):
     @reactive.event(input.select_image)
     def update_selected_images():
         if input.select_image() is not None:
-            #selected = [data_all_2d()[i] for i in input.select_image()]
-            #auto_transformation_estimated.set(False)
             selected_images.set(
                 [data_all_2d()[i] for i in input.select_image()]
             )
@@ -1503,54 +1632,56 @@ def server(input, output, session):
             mode = input.input_type() 
 
             if mode in ["PS", "PD"] or input.is_3d():
-                # angle_auto.set(0.0)
-                # dx_auto.set(0.0)
-                # dy_auto.set(0.0)
-                ui.update_numeric('angle', value=0.0)
-                ui.update_numeric('dx', value=0.0)
-                ui.update_numeric('dy', value=0.0)
+                if not inhibit_update():
+                    ui.update_numeric('angle', value=0.0)
+                    ui.update_numeric('dx', value=0.0)
+                    ui.update_numeric('dy', value=0.0)
             else:
-                print("Estimating auto transformation parameters...")
+                if inhibit_update():
+                    #print("transformation params update inhibited")
+                    ui.update_numeric('mask_len', value=90.0)
+                    inhibit_update.set(False)
+                    return
+                #print("Estimating auto transformation parameters...")
                 ang_auto_v, dy_auto_v, diameter = helicon.estimate_helix_rotation_center_diameter(selected_images()[0], estimate_center=True, estimate_rotation=True)
-                # angle_auto.set(round(ang_auto_v+90,2))
-                # dy_auto.set(round(dy_auto_v*input.apix(),2))
-                # mask_radius_auto.set(round(diameter/2*input.apix(),2))
-                print("Estimated angle:", ang_auto_v+90)
-                print("input angle before:", input.angle())
+                #print("Estimated angle:", ang_auto_v+90)
+                #print("input angle before:", input.angle())
                 ui.update_numeric('angle', value=round(ang_auto_v+90,2))
-                print("input angle after:", input.angle())
+                #print("input angle after:", input.angle())
                 ui.update_numeric('dx', value=0.0)
                 ui.update_numeric('dy', value=round(dy_auto_v*input.apix(),2))
                 ui.update_numeric('mask_radius', value=round(diameter/2*input.apix(),2))
                 mask_len_percent_auto_default = 90.0
-                if input.straightening():
-                    mask_len_percent_auto_default = 100.0
-                #mask_len_percent_auto.set(mask_len_percent_auto_default)
                 ui.update_numeric('mask_len', value=mask_len_percent_auto_default)
-                #auto_transformation_estimated.set(True)
-            print(selected_images())
-            print("Auto transformation parameters set: angle=", input.angle())            
+            #print(selected_images())
+            #print("Auto transformation parameters set: angle=", input.angle())            
             
     @reactive.effect
     @reactive.event(input.img_file_upload)
     def get_images_from_input_upload():
         if input.input_mode_params() == "1":
-            print("Uploading image file...")
+            #print("Uploading image file...")
             fileinfo = input.img_file_upload()
             if fileinfo is not None:
                 class_file = fileinfo[0]["datapath"]
                 try:
                     data, apix, crs = compute.get_class2d_from_file(class_file)
-                    print(crs)
+                    #print(crs)
                     nz_file, ny_file, nx_file = data.shape
-                    apix_from_file.set(apix)
-                    update_with_apix_from_file(apix)
+                    #print("Uploaded shape:", data.shape)
+                    if apix > 0:
+                        apix_from_file.set(apix)
+                        update_with_apix_from_file(apix)
                     #update_dimensions(data)
                     input_data.set(data)
                     nx_curr_img.set(nx_file)
                     ny_curr_img.set(ny_file)
                     nz_curr_img.set(nz_file)
-                    update_with_ny_nx(ny_file, nx_file)
+                    #update_with_ny_nx(ny_file, nx_file)
+                    ui.update_numeric('pnx', min=min(ny_file, 128))
+                    ui.update_numeric('pny', min=min(nx_file, 512))
+                    if not inhibit_update():
+                        initial_selected_image_indices.set([0])
                 except Exception as e:
                     print(e)
                     modal = ui.modal(
@@ -1560,26 +1691,35 @@ def server(input, output, session):
                         footer=None
                     )
                     ui.modal_show(modal)
+            elif input.input_mode_params() == "2":
+                pass
     
     
     @reactive.effect
     @reactive.event(input.img_file_url, input.input_mode_params)
     def get_images_from_input_url():
         req(input.input_mode_params()=="2")
-        print("Downloading image file from URL...")
+        #print("Downloading image file from URL...")
         url = input.img_file_url()
         try:
             data, apix, crs = compute.get_class2d_from_url(url)
-            print(crs)
+            #print(crs)
+            #print("apix from url:", apix)
             nz_file, ny_file, nx_file = data.shape
-            apix_from_file.set(apix)
-            update_with_apix_from_file(apix)
+            #print("URL downloaded shape:", data.shape)
+            if apix > 0:
+                apix_from_file.set(apix)
+                update_with_apix_from_file(apix)
             #update_dimensions(data)
             input_data.set(data)
             nx_curr_img.set(nx_file)
             ny_curr_img.set(ny_file)
             nz_curr_img.set(nz_file)
-            update_with_ny_nx(ny_file, nx_file)
+            #update_with_ny_nx(ny_file, nx_file)
+            ui.update_numeric('pnx', min=min(ny_file, 128))
+            ui.update_numeric('pny', min=min(nx_file, 512))
+            if not inhibit_update():
+                initial_selected_image_indices.set([0])
         except Exception as e:
             print(e)
             modal = ui.modal(
@@ -1599,15 +1739,22 @@ def server(input, output, session):
         req(len(emdb_id) > 0)
         try:
             data, apix = util.get_images_from_emdb(emdb_id=emdb_id)
+            #print("emd shape:", data.shape)
             nz_file, ny_file, nx_file = data.shape
-            apix_from_file.set(apix)
-            update_with_apix_from_file(apix)
+            #print("EMD downloaded shape:", data.shape)
+            if apix > 0:
+                apix_from_file.set(apix)
+                update_with_apix_from_file(apix)
             #update_dimensions(data)
             input_data.set(data)
             nx_curr_img.set(nx_file)
             ny_curr_img.set(ny_file)
             nz_curr_img.set(nz_file)
-            update_with_ny_nx(ny_file, nx_file)
+            #update_with_ny_nx(ny_file, nx_file)
+            ui.update_numeric('pnx', min=min(ny_file, 128))
+            ui.update_numeric('pny', min=min(nx_file, 512))
+            if not inhibit_update():
+                initial_selected_image_indices.set([0])
         except Exception as e:
             import traceback
 
@@ -1624,9 +1771,16 @@ def server(input, output, session):
             return
 
     def update_with_apix_from_file(apix):
-        ui.update_numeric('apix', value=apix)
-        ui.update_numeric('res_limit_x', value=round(3*apix_from_file(),4), min=2*apix_from_file())
-        ui.update_numeric('res_limit_y', value=round(2*apix_from_file(),4), min=2*apix_from_file())
+        if not inhibit_update():
+            ui.update_numeric('apix', value=apix)
+    
+    @reactive.effect
+    @reactive.event(input.apix)
+    def update_res_limits_with_apix():
+        req(input.input_type() == "Image")
+        ui.update_numeric('res_limit_x', value=round(3*input.apix(),4))
+        ui.update_numeric('res_limit_y', value=round(2*input.apix(),4))
+
 
     fig_orig_img, data_source_orig_img = compute.create_image_figure(
         init_img_data, 
@@ -1653,7 +1807,7 @@ def server(input, output, session):
     @reactive.event(selected_images, input.apix)
     def update_display_selected_image():
         req(len(selected_images())>0)
-        print("update display_selected_image:"+str(input.apix()))
+        #print("update display_selected_image:"+str(input.apix()))
         
         curr_img = selected_images()[0]
 
@@ -1677,9 +1831,9 @@ def server(input, output, session):
             "dh":[h*dy]
         }
 
-    def update_with_ny_nx(ny_val, nx_val):
-        ui.update_numeric('pnx', min=min(ny_val, 128))
-        ui.update_numeric('pny', min=min(nx_val, 512))
+    # def update_with_ny_nx(ny_val, nx_val):
+    #     ui.update_numeric('pnx', min=min(ny_val, 128))
+    #     ui.update_numeric('pny', min=min(nx_val, 512))
 
     fig_transformed_img, data_source_transformed_img = compute.create_image_figure(
         init_img_data, 
@@ -1777,13 +1931,14 @@ def server(input, output, session):
         req(len(selected_images())>0)
         req(input.apix()!=0)
         if (input.angle() or input.dx() or input.dy() or input.negate()):
-            unmasked_data = compute.transform_2d_filament(selected_images()[0],input.angle(),input.dx(),input.dy(),input.negate(),input.apix())
+            unmasked_data = compute.transform_2d_image(selected_images()[0],input.angle(),input.dx(),input.dy(),input.negate(),input.apix())
         else:
             unmasked_data = selected_images()[0]
-        
+        #print(np.shape(selected_images()[0]))
         curr_x = np.arange(-nx_curr_img() // 2, nx_curr_img() // 2) * input.apix()
         curr_ymax = np.max(unmasked_data, axis=0)
         curr_ymean = np.mean(unmasked_data, axis=0)
+        #print("radial profie:",np.shape(curr_x),np.shape(curr_ymax),np.shape(curr_ymean))
 
         radial_profile_line_max.data_source.data['x'] = curr_x
         radial_profile_line_max.data_source.data['y'] = curr_ymax        
@@ -1809,13 +1964,9 @@ def server(input, output, session):
     acf_tooltips = [("Axial Shift", "@y{0.0}Å")]
     acf_p = figure(x_axis_label="Auto-correlation", y_axis_label="Axial Shift (Å)", frame_height=acf_ny,y_range=[acf_ny//2*init_apix, -acf_ny//2*init_apix], sizing_mode="scale_both", tools=acf_tools, tooltips=acf_tooltips)
     acf_line = acf_p.line(acf_xmax, acf_y, line_width=2, color='red', legend_label="ACF")
-    print("acf figure created")
-    # if 0:
-    #     xmean = np.mean(acf, axis=1)
-    #     p.line(xmean, y, line_width=2, color='blue', legend_label="mean")
+    #print("acf figure created")
     acf_p.hover[0].attachment = "above"
-    #print("acf legends:")
-    #print(p.legend.__dir__())
+
     acf_p.legend.visible = False
     acf_p.legend.location = "top_right"
     acf_p.legend.click_policy="hide"
@@ -1840,7 +1991,8 @@ def server(input, output, session):
     def update_acf_data():
         req(input.input_type() in ["Image"])
         req(data_2d_transformed() is not None)
-        print("updating acf")
+        #print("updating acf")
+        #print(query_params())
 
         ny, nx = data_2d_transformed().shape
         curr_acf = compute.auto_correlation(data_2d_transformed(), sqrt=True, high_pass_fraction=0.1)
@@ -1854,7 +2006,16 @@ def server(input, output, session):
         acf_p.frame_height = ny
         acf_line.data_source.data['x'] = np.max(curr_acf, axis=1)
         acf_line.data_source.data['y'] = np.arange(-ny//2, ny//2)*input.apix()
-    
+
+    @reactive.calc
+    def query_params():
+        # `url_search()` returns the query part like "?foo=1&bar=b%20a%20r"
+        qs = session.clientdata.url_search() or ""   # reactive; must be inside reactive code
+        d = {k: v[0] if len(v)==1 else v
+            for k, v in parse_qs(qs.lstrip("?")).items()}
+        #print("updating query params:",d)
+        return d
+
 app = App(app_ui, server)
 
 

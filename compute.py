@@ -8,6 +8,7 @@ memory = Memory(location=f"/tmp/{username}_joblib_cache", verbose=0)
 
 from shiny import reactive
 from shiny.express import ui, render, module, expressify
+import plotly.graph_objects as go
 import helicon
 from itertools import product
 
@@ -25,6 +26,7 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.special import jnp_zeros
 from scipy.optimize import minimize, fmin
 
+from streamlit_bokeh import streamlit_bokeh
 from bokeh.events import MouseMove, MouseEnter, DoubleTap
 from bokeh.io import export_png
 from bokeh.layouts import gridplot, column, layout
@@ -32,7 +34,7 @@ from bokeh.models import Button, ColumnDataSource, CustomJS, Label, LinearColorM
 from bokeh.models.tools import CrosshairTool, HoverTool
 from bokeh.plotting import figure
 
-def create_image_figure(image, dx, dy, title="", title_location="below", plot_width=None, plot_height=None, x_axis_label='x', y_axis_label='y', tooltips=None, show_axis=True, show_toolbar=True, crosshair_color="white", aspect_ratio=None):
+def create_image_figure(image, dx, dy, title="", title_location="below", plot_width=None, plot_height=None, x_axis_label='x', y_axis_label='y', tooltips=None, show_axis=True, show_toolbar=True, crosshair_color="white", aspect_ratio=None, tools='box_zoom,crosshair,pan,reset,save,wheel_zoom'):
     #from bokeh.plotting import figure
     h, w = image.shape
     if aspect_ratio is None:
@@ -40,7 +42,7 @@ def create_image_figure(image, dx, dy, title="", title_location="below", plot_wi
             aspect_ratio = plot_width/plot_height
         else:
             aspect_ratio = w*dx/(h*dy)
-    tools = 'box_zoom,crosshair,pan,reset,save,wheel_zoom,tap'
+    tools = tools
     fig = figure(title_location=title_location, 
         frame_width=plot_width, frame_height=plot_height, 
         x_axis_label=x_axis_label, y_axis_label=y_axis_label,
@@ -94,6 +96,13 @@ def create_layerline_image_figure(data, cutoff_res_x, cutoff_res_y, helical_radi
     fig.title.align = "center"
     fig.title.text_font_size = "20px"
     fig.yaxis.visible = yaxis_visible   # leaving yaxis on will make the crosshair x-position out of sync with other figures
+    # hide ticks
+    fig.xaxis.major_label_text_font_size = '0pt'
+    fig.yaxis.major_label_text_font_size = '0pt'
+    fig.xaxis.minor_tick_line_color = None
+    fig.xaxis.major_tick_line_color = None
+    fig.yaxis.minor_tick_line_color = None
+    fig.yaxis.major_tick_line_color = None
 
     source_data = ColumnDataSource(data=dict(image=[data.astype(np.float16)], x=[-nx//2*dsx], y=[-ny//2*dsy], dw=[nx*dsx], dh=[ny*dsy], bessel=[bessel]))
     if phase is not None: source_data.add(data=[np.fmod(np.rad2deg(phase)+360, 360).astype(np.float16)], name="phase")
@@ -375,12 +384,12 @@ def compute_phase_difference_across_meridian(phase):
     return phase_diff
 
 @helicon.cache(expires_after=7, cache_dir=helicon.cache_dir / "hill", verbose=0)
-def transform_2d_filament(data, angle, dx, dy, negate, apix):
+def transform_2d_image(data, angle, dx, dy, negate, apix):
     if negate:
         data = -data
 
     if (angle or dx or dy):
-        data= rotate_shift_image(
+        data = rotate_shift_image(
             data, 
             angle = -angle, 
             post_shift = (dy / apix, dx / apix), 
@@ -418,12 +427,12 @@ def get_class2d_from_uploaded_file(fileobj):
     import os, tempfile
 
     orignal_filename = fileobj.name
-    print("file obj name: ", orignal_filename)
+    #print("file obj name: ", orignal_filename)
     # add back!! os.listdir("C:\\Users\\anika\\AppData\\Local\\Temp\\")
     suffix = os.path.splitext(orignal_filename)[-1]
     with tempfile.NamedTemporaryFile(suffix=suffix) as temp:
         temp.write(fileobj.read())
-        print("TN: ", temp.name)
+        #print("TN: ", temp.name)
         return get_class2d_from_file(temp.name)
 
 def generate_tapering_filter(image_size, fraction_start=[0, 0], fraction_slope=0.1):
@@ -505,38 +514,63 @@ def estimate_radial_range(data, thresh_ratio=0.1):
 @memory.cache
 def get_class2d_from_url(url):
 
-    print("start function")
+    #print("start function")
     url_final = get_direct_url(url)  # convert cloud drive indirect url to direct url
-    print("url final: ", url_final)
+    #print("url final: ", url_final)
     fileobj = download_file_from_url(url_final)
-    print("fileobj: ", fileobj)
+    #print("fileobj: ", fileobj)
     if fileobj is None:
         raise ValueError(
             f"ERROR: {url} could not be downloaded. If this url points to a cloud drive file, make sure the link is a direct download link instead of a link for preview"
         )
-    print("before data")
+    #print("before data")
     data, apix, crs = get_class2d_from_file(fileobj.name)
-    print("data: ", data)
+    #print("data: ", data)
     return data, apix, crs
 
 
-def get_class2d_from_file(classFile):
-    import mrcfile
-    #print("before mrcfile")
-    #classFile = "C:\\Users\\anika\\Downloads\\run_it020_classes.mrcs"
-    try: 
-        open(classFile, "r")
-    except Exception as e:
-        print("open exception: ", e)
+# def get_class2d_from_file(classFile):
+#     import mrcfile
+#     #print("before mrcfile")
+#     #classFile = "C:\\Users\\anika\\Downloads\\run_it020_classes.mrcs"
+#     # try: 
+#     #     open(classFile, "r")
+#     # except Exception as e:
+#     #     print("open exception: ", e)
+    
+#     with mrcfile.open(classFile) as mrc:
+#         #print("opens mrc file")
+#         map_crs = [int(mrc.header.mapc), int(mrc.header.mapr), int(mrc.header.maps)]
+#         apix = float(mrc.voxel_size.x)
+#         data = mrc.data
+#     #print("got data: ", data)
+#     return data, round(apix, 4), map_crs
 
-    #print("after opening")
-    with mrcfile.open(classFile) as mrc:
-        #print("opens mrc file")
-        map_crs = [int(mrc.header.mapc), int(mrc.header.mapr), int(mrc.header.maps)]
-        apix = float(mrc.voxel_size.x)
-        data = mrc.data
-    #print("got data: ", data)
-    return data, round(apix, 4), map_crs
+def get_class2d_from_file(filename):
+    try:
+        import mrcfile
+        with mrcfile.open(filename) as mrc:
+            map_crs = [int(mrc.header.mapc), int(mrc.header.mapr), int(mrc.header.maps)]
+            data = mrc.data.astype(np.float32)
+            apix = mrc.voxel_size.x.item()
+    except:
+        from skimage.io import imread
+        data = imread(filename, as_gray=1) * 1.0    # return: numpy array
+        data = data[::-1, :]
+        #apix = 1.0
+        apix = -1.0  # unknown
+        map_crs = [1, 2, 3]
+
+    if data.dtype==np.dtype('complex64'):
+        data_complex = data
+        ny, nx = data_complex[0].shape
+        data = np.zeros((len(data_complex), ny, (nx-1)*2), dtype=np.float32)
+        for i in range(len(data)):
+            tmp = np.abs(np.fft.fftshift(np.fft.fft(np.fft.irfft(data_complex[i])), axes=1))
+            data[i] = normalize(tmp, percentile=(0.1, 99.9))
+    if len(data.shape)==2:
+        data = np.expand_dims(data, axis=0)
+    return data.astype(np.float32), round(apix,4), map_crs
 
 def download_file_from_url(url):
     import tempfile
@@ -547,9 +581,10 @@ def download_file_from_url(url):
         return open(url, "rb")
     try:
         filesize = get_file_size(url)
-        local_filename = url.split("/")[-1]
-        suffix = "." + local_filename
-        fileobj = tempfile.NamedTemporaryFile(suffix=suffix, delete=False)
+        #local_filename = url.split("/")[-1]
+        #suffix = "." + local_filename
+        suffix = ".download" # avoid illegal characters in filename
+        fileobj = tempfile.NamedTemporaryFile(suffix=suffix, delete=False) # delete=False for windows issue with tempfile package
         with requests.get(url) as r:
             r.raise_for_status()  # Check for request success
             fileobj.write(r.content)
@@ -682,8 +717,8 @@ def get_one_map_xyz_projects(map_info): # length_z, map_projection_xyz_choices):
     # if 'x' in map_projection_xyz_choices:
     #     images += [data.sum(axis=2)]
     #     image_labels += [label + ':X']
-    print("data, apix: ", data, apix)
-    print("sum: ", np.sum(data))
+    #print("data, apix: ", data, apix)
+    #print("sum: ", np.sum(data))
         
     return images, image_labels, apix
 
@@ -1034,36 +1069,40 @@ def create_fit_spline_figure(data,xs,ys,new_xs,apix):
     return fig
 
 #@st.cache_data(persist='disk', show_spinner=False)
-def fit_spline(_disp_col,data,xs,ys,apix,display=False):
+def fit_spline(xs,ys):
+    if len(xs) < 4:
+        return None
+    xs = np.asarray(xs, float); ys = np.asarray(ys, float)
     # fit spline
-    ny,nx=data.shape
+    #ny,nx=data.shape
     tck = splrep(ys,xs,s=20)
-    new_xs = splev(ys,tck)
+    #new_xs = splev(ys,tck)
     
-    return new_xs,tck
+    return tck
 
 # test the straightening part by forcing using the center of a straight filament: works
 # TODO: check the nans in the output images
 #@st.cache_data(persist='disk', show_spinner=False)
-def filament_straighten(_disp_col,data,tck,new_xs,ys,r_filament_pixel_display,apix):
+def filament_straighten(data,tck,r_filament_pixel_display):
     ny,nx=data.shape
-    # resample pixels
-    #st.info(tck)
-    y0=0
-    x0=splev(y0,tck)
-    for i in range(ny):
-        dxdy=splev(y0,tck,der=1)
-        orthog_dxdy=-(1.0/dxdy)
-        tangent_x0y0=lambda y: dxdy*y + (x0-dxdy*y0)
-        normal_x0y0=lambda y: orthog_dxdy*y + (x0-orthog_dxdy*y0)
-        rev_normal_x0y0=lambda x: (x+orthog_dxdy*y0-x0)/orthog_dxdy
-        #new_row_xs=np.arange(-int(nx/2),int(nx/2),1).T*np.abs(orthog_dxdy)/np.sqrt(1+orthog_dxdy*orthog_dxdy)+x0
-        new_row_xs = np.arange(-int(r_filament_pixel_display), int(r_filament_pixel_display), 1).T * np.abs(orthog_dxdy) / np.sqrt(
-            1 + orthog_dxdy * orthog_dxdy) + x0
-        new_row_ys=rev_normal_x0y0(new_row_xs)
-        y0=y0+np.sqrt((1-dxdy*dxdy))
-        #st.info(dxdy)
-        x0=splev(y0,tck)
+
+    # # resample pixels
+    # #st.info(tck)
+    # y0=0
+    # x0=splev(y0,tck)
+    # for i in range(ny):
+    #     dxdy=splev(y0,tck,der=1)
+    #     orthog_dxdy=-(1.0/dxdy)
+    #     #tangent_x0y0=lambda y: dxdy*y + (x0-dxdy*y0)
+    #     #normal_x0y0=lambda y: orthog_dxdy*y + (x0-orthog_dxdy*y0)
+    #     rev_normal_x0y0=lambda x: (x+orthog_dxdy*y0-x0)/orthog_dxdy
+    #     #new_row_xs=np.arange(-int(nx/2),int(nx/2),1).T*np.abs(orthog_dxdy)/np.sqrt(1+orthog_dxdy*orthog_dxdy)+x0
+    #     new_row_xs = np.arange(-int(r_filament_pixel_display), int(r_filament_pixel_display), 1).T * np.abs(orthog_dxdy) / np.sqrt(
+    #         1 + orthog_dxdy * orthog_dxdy) + x0
+    #     new_row_ys=rev_normal_x0y0(new_row_xs)
+    #     y0=y0+np.sqrt((1-dxdy*dxdy))
+    #     #st.info(dxdy)
+    #     x0=splev(y0,tck)
 
     # interpolate resampled pixles
     x_coord=np.arange(0,nx,1)
@@ -1111,9 +1150,4 @@ def filament_straighten(_disp_col,data,tck,new_xs,ys,r_filament_pixel_display,ap
     #        else:
     #            break
     
-    # with _disp_col:
-    #    st.write("Straightened image:")
-    #    fig = create_image_figure(new_im, apix, apix, plot_width=nx, plot_height=ny, x_axis_label=None, y_axis_label=None, tooltips=None, show_axis=False, show_toolbar=False, crosshair_color="white")
-    #    st.bokeh_chart(fig, use_container_width=True)
-
     return new_im
