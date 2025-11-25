@@ -26,7 +26,6 @@ from scipy.interpolate import RegularGridInterpolator
 from scipy.special import jnp_zeros
 from scipy.optimize import minimize, fmin
 
-from streamlit_bokeh import streamlit_bokeh
 from bokeh.events import MouseMove, MouseEnter, DoubleTap
 from bokeh.io import export_png
 from bokeh.layouts import gridplot, column, layout
